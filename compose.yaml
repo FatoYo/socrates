@@ -1,0 +1,47 @@
+# Socrates on a server. Copy .env.example to .env next to this file, fill it in, then:
+#   docker compose pull && docker compose up -d
+# All values come from .env.
+
+name: socrates
+
+networks:
+  socrates:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: ${BRIDGE_NAME}
+    ipam:
+      config:
+        - subnet: ${SUBNET}
+
+services:
+  socrates:
+    container_name: socrates
+    image: ghcr.io/fatoyo/socrates:${SOCRATES_VERSION:-latest}
+    restart: always
+    user: "${PUID:?}:${PGID:?}"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g,mode=1777        # Chromium profile and shared memory, temporary files
+    networks:
+      - socrates
+    ports:
+      - "${HOST_IP:?}:${PORT}:3141"
+      # Tailscale: remove the next line if the app isn't published on Tailscale
+      - "${TS_IP:?}:${PORT}:3141"
+    env_file:
+      - .env
+    volumes:
+      - socrates-data:/data            # settings, extractor configs (Socrates password), logs, schedule state
+      - ${ARRAYS_LOCATION:?}:/archive/arrays
+      - ${BLOG_LOCATION:?}:/archive/blog
+    mem_limit: ${MEM_LIMIT}
+    pids_limit: ${PIDS_LIMIT}
+    healthcheck:
+      disable: false                   # the check itself is defined in the image
+
+volumes:
+  socrates-data:                       # removed only by "docker compose down -v" or "docker volume rm"

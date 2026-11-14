@@ -1,0 +1,104 @@
+{
+  "credentials": {
+    "url": "https://standard.socratesplatform.com/",
+    "username": "your-email@example.com",
+    "password": "your-password"
+  },
+  "tickers": {
+    "TQQQ": {
+      "ticker": "TQQQ",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e881f5d5469a6a986d0d5d#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/TQQQ"
+    },
+    "PLTR": {
+      "ticker": "PLTR",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9d291de032a1f3f93dafa#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/PLTR"
+    },
+    "SMR": {
+      "ticker": "SMR",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9d291de032a1f3f93db22#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/SMR"
+    },
+    "ANET": {
+      "ticker": "ANET",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9d291de032a1f3f93daf8#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/ANET"
+    },
+    "UNH": {
+      "ticker": "UNH",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9d291de032a1f3f93def0#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/UNH"
+    },
+    "AEM": {
+      "ticker": "AEM",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9d291de032a1f3f93dae0#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/AEM"
+    },
+    "BTC": {
+      "ticker": "BTC",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9ddd0463b600f19e7d102#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/BTC"
+    },
+    "NVO": {
+      "ticker": "NVO",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9d291de032a1f3f93dcd5#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/NVO"
+    },
+    "NET": {
+      "ticker": "NET",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9d291de032a1f3f93deb0#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/NET"
+    },
+    "WEAT": {
+      "ticker": "WEAT",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9d291de032a1f3f93da96#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/WEAT"
+    },
+    "KOLD": {
+      "ticker": "KOLD",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9d291de032a1f3f93e0b4#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/KOLD"
+    },
+    "SQQQ": {
+      "ticker": "SQQQ",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9d291de032a1f3f93da50#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/SQQQ"
+    },
+    "UCO": {
+      "ticker": "UCO",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9d291de032a1f3f93e102#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/UCO"
+    },
+    "SLV": {
+      "ticker": "SLV",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9d291de032a1f3f93da7c#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/SLV"
+    },
+    "VOO": {
+      "ticker": "VOO",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9d291de032a1f3f93e07c#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/VOO"
+    },
+    "DIA": {
+      "ticker": "DIA",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9d291de032a1f3f93e0d0#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/DIA"
+    },
+    "BOIL": {
+      "ticker": "BOIL",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9d291de032a1f3f93db4a#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/BOIL"
+    },
+    "SDOW": {
+      "ticker": "SDOW",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9d291de032a1f3f93e098#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/SDOW"
+    },
+    "UDOW": {
+      "ticker": "UDOW",
+      "url": "https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=68e9d291de032a1f3f93dda4#/section=dashboard",
+      "archivePath": "/path/to/save/screenshots/UDOW"
+    }
+  }
+}

@@ -1,0 +1,9 @@
+# Local settings (folder locations) and the blog index cache
+settings.json
+.cache/
+venv/
+# Logs of the automatic downloads and the scheduler's state
+logs/
+.state/
+# Written by the Docker build (version shown in the menu)
+build-info.json

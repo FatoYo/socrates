@@ -1,0 +1,130 @@
+# Builds the Socrates image, signs it and publishes it to GitHub Container Registry,
+# then creates the GitHub release.
+# Runs only when started by hand: GitHub → Actions → docker → Run workflow, then enter the
+# version. Version 1.0 publishes ghcr.io/fatoyo/socrates:1.0, :1 and :latest, a signed
+# build attestation for the image, and the release v1.0.
+name: docker
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, e.g. 1.0 or 1.1"
+        required: true
+        type: string
+
+permissions:
+  contents: write       # create the tag and the release
+  packages: write       # push the image
+  attestations: write   # store the signed build attestation
+  id-token: write       # sign it as this workflow (Sigstore)
+
+# Two runs at the same time could publish the same version twice
+concurrency:
+  group: docker-release
+  cancel-in-progress: false
+
+jobs:
+  image:
+    # Only the repository owner, and only from the main branch: nobody else can publish an
+    # image, and a modified copy of this workflow on another branch can't be run
+    if: github.ref == 'refs/heads/main' && github.actor == github.repository_owner
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::The version must look like 1.0 or 1.1 (got '$VERSION')"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "MAJOR=${VERSION%%.*}" >> "$GITHUB_ENV"
+          # Image names must be lowercase, GitHub user names may not be
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/socrates" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-qemu-action@v4          # builds the arm64 image on an amd64 runner
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A published version never changes: stop if this one already exists
+      - name: Check the version isn't published yet
+        run: |
+          if docker buildx imagetools inspect "$IMAGE:$VERSION" > /dev/null 2>&1; then
+            echo "::error::$IMAGE:$VERSION is already published. Choose a new version."
+            exit 1
+          fi
+
+      # Standard labels (source repository, licence, revision) for the package page
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ env.VERSION }}
+            type=raw,value=${{ env.MAJOR }}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.version=${{ env.VERSION }}
+
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            REVISION=${{ github.sha }}
+            REPO_URL=${{ github.server_url }}/${{ github.repository }}
+          provenance: mode=max        # BuildKit records how the image was built
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Signed statement that this repository's workflow built this exact image.
+      # Check it with: gh attestation verify oci://ghcr.io/fatoyo/socrates:1.0 --owner FatoYo
+      - name: Sign the image (build attestation)
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.IMAGE }}            # the image name without a tag
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false              # only available for organisation-owned repositories
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "v$VERSION" > /dev/null 2>&1; then
+            echo "::notice::The release v$VERSION already exists, leaving it as it is."
+            exit 0
+          fi
+          cat > release-notes.md <<EOF
+          Docker image: \`$IMAGE:$VERSION\` (linux/amd64 and linux/arm64)
+
+          \`\`\`bash
+          docker pull $IMAGE:$VERSION
+          \`\`\`
+
+          The image is signed. To check that this repository's workflow built it:
+
+          \`\`\`bash
+          gh attestation verify oci://$IMAGE:$VERSION --owner $GITHUB_REPOSITORY_OWNER
+          \`\`\`
+          EOF
+          gh release create "v$VERSION" --title "v$VERSION" --target "$GITHUB_SHA" \
+            --latest --notes-file release-notes.md
