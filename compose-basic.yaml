@@ -1,0 +1,40 @@
+# Socrates: basic setup. Every value can be overridden in a .env file next to this file.
+#
+# Before the first start, create the folders as the user the container runs as:
+#   mkdir -p data arrays blog
+# If that user is not 1000:1000, set PUID and PGID in .env to its IDs (id -u, id -g).
+#
+#   docker compose up -d      then open http://<server>:3141
+# In Settings enter /archive/arrays and /archive/blog.
+
+services:
+  socrates:
+    container_name: socrates
+    image: ghcr.io/fatoyo/socrates:${SOCRATES_VERSION:-latest}
+    restart: unless-stopped
+
+    # Defaults to 1000:1000 when PUID and PGID are not set in .env.
+    user: "${PUID:-1000}:${PGID:-1000}"
+
+    # Read-only root filesystem; the app writes only to /data, the archive folders and /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g,mode=1777        # Chromium profile and shared memory
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    ports:
+      - "${PORT:-3141}:3141"
+
+    environment:
+      TZ: ${TZ:-UTC}
+
+    volumes:
+      - ${DATA_LOCATION:-./data}:/data                 # settings, Socrates account, logs, schedule state
+      - ${ARRAYS_LOCATION:-./arrays}:/archive/arrays   # timing array screenshots, one folder per ticker
+      - ${BLOG_LOCATION:-./blog}:/archive/blog         # blog posts, one folder per year
+
+    mem_limit: ${MEM_LIMIT:-2g}
+    pids_limit: ${PIDS_LIMIT:-512}

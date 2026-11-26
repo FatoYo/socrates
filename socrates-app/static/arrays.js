@@ -13,11 +13,33 @@ function periodKey(date, frame) {
   return 'W' + (n - weekday);
 }
 
+/**
+ * The one rule for which array to show for a date, used everywhere the date has to carry over
+ * (ticker click, ticker search, ↑/↓, time frame switch, a new second column, column sync).
+ * `list` holds ascending "YYYYMMDD" dates. Prefers the array in the same day, week or month as
+ * `date` (period of `periodFrame`), closest to `date`; otherwise the nearest array overall, or
+ * null when `exact` is set. Without a date, the latest array.
+ */
+function arrayFor(list, date, periodFrame, exact = false) {
+  if (!list.length) return null;
+  if (!date) return exact ? null : list[list.length - 1];
+  const key = periodKey(date, periodFrame);
+  const target = dayNum(date);
+  let best = null, bestDiff = Infinity;
+  for (const d of list) {
+    if (periodKey(d, periodFrame) !== key) continue;
+    const diff = Math.abs(dayNum(d) - target);
+    if (diff < bestDiff) { best = d; bestDiff = diff; }
+  }
+  if (best || exact) return best;
+  return list[nearestIndex(list, date)];
+}
+
 const Arrays = {
   el: $('#page-arrays'),
   data: null,        // { TICKER: { D: [asc dates], W: [...], M: [...] } }
   tickers: [],
-  cols: [],          // [{ ticker, frame, date }]
+  cols: [],          // [{ ticker, frame, date, anchor }]: anchor is the date the user chose
   colEls: [],
   focus: 0,
   showHelp: store.get('arraysHelp', false),
@@ -62,7 +84,7 @@ const Arrays = {
     if (!this.data) return;
     this.cols.forEach((c, i) => {
       const l = this.dates(c);
-      if (wasLatest[i] && l.length) c.date = l[l.length - 1];
+      if (wasLatest[i] && l.length) c.date = c.anchor = l[l.length - 1];
     });
     this.changed();
   },
@@ -74,14 +96,11 @@ const Arrays = {
 
   /** Make a column state valid for the current data, keeping as much of it as possible. */
   normalize(c) {
-    const col = { ticker: c.ticker, frame: c.frame, date: c.date };
+    const col = { ticker: c.ticker, frame: c.frame, date: c.date, anchor: c.anchor || c.date };
     if (!this.data[col.ticker]) col.ticker = this.tickers[0];
     if (!FRAMES.includes(col.frame)) col.frame = 'D';
     if (!this.dates(col).length) col.frame = FRAMES.find((f) => this.dates(col, f).length) || 'D';
-    const list = this.dates(col);
-    if (!list.length) col.date = null;
-    else if (!col.date) col.date = list[list.length - 1];
-    else col.date = list[nearestIndex(list, col.date)];
+    col.date = arrayFor(this.dates(col), col.anchor, col.frame);
     return col;
   },
 
@@ -213,38 +232,30 @@ const Arrays = {
     this.save();
   },
 
-  setTicker(ci, ticker) {
-    const col = this.cols[ci];
-    col.ticker = ticker;
-    if (!this.dates(col).length) col.frame = FRAMES.find((f) => this.dates(col, f).length) || col.frame;
-    const list = this.dates(col);
-    col.date = list.length ? list[list.length - 1] : null;
-    this.setFocus(ci);
-    this.changed();
-  },
-
-  setFrame(ci, frame) {
-    const col = this.cols[ci];
-    col.frame = frame;
-    const list = this.dates(col);
-    col.date = list.length ? list[list.length - 1] : null;
-    this.setFocus(ci);
-    this.changed();
-  },
-
   /**
-   * Show the previous (dir -1, towards A) or next (dir +1, towards Z) ticker, wrapping at the ends.
-   * The time frame and date are kept: the new ticker opens at its array nearest to the current date.
+   * Switch a column to another ticker and/or time frame, keeping the date: the new array is the
+   * one for the date the user chose (see arrayFor), so Daily 13 Nov -> Monthly -> Daily returns to
+   * 13 Nov. Mouse clicks, the ticker search and the keyboard all go through here.
    */
-  stepTicker(ci, dir) {
+  switchArray(ci, change) {
     const col = this.cols[ci];
+    const date = col.anchor || col.date;
+    Object.assign(col, change);
+    if (!this.dates(col).length) col.frame = FRAMES.find((f) => this.dates(col, f).length) || col.frame;
+    col.date = arrayFor(this.dates(col), date, col.frame);
+    this.setFocus(ci);
+    this.changed();
+  },
+
+  setTicker(ci, ticker) { this.switchArray(ci, { ticker }); },
+
+  setFrame(ci, frame) { this.switchArray(ci, { frame }); },
+
+  /** Show the previous (dir -1, towards A) or next (dir +1, towards Z) ticker, wrapping at the ends. */
+  stepTicker(ci, dir) {
     const n = this.tickers.length;
     if (n < 2) return;
-    col.ticker = this.tickers[(this.tickers.indexOf(col.ticker) + dir + n) % n];
-    if (!this.dates(col).length) col.frame = FRAMES.find((f) => this.dates(col, f).length) || col.frame;
-    const list = this.dates(col);
-    col.date = list.length ? list[nearestIndex(list, col.date || list[list.length - 1])] : null;
-    this.changed();
+    this.setTicker(ci, this.tickers[(this.tickers.indexOf(this.cols[ci].ticker) + dir + n) % n]);
   },
 
   step(ci, dir) {
@@ -259,6 +270,7 @@ const Arrays = {
   /** Set a column's date; with sync, move the other column to the matching period when it has one. */
   setDate(ci, date, sync) {
     this.cols[ci].date = date;
+    this.cols[ci].anchor = date;
     this.setFocus(ci);
     if (sync && this.cols.length === 2) this.syncOther(ci);
     this.changed();
@@ -273,15 +285,8 @@ const Arrays = {
     const src = this.cols[ci], other = this.cols[1 - ci];
     if (!src.date || !other.date) return;
     const coarse = FRAME_RANK[src.frame] >= FRAME_RANK[other.frame] ? src.frame : other.frame;
-    const key = periodKey(src.date, coarse);
-    const target = dayNum(src.date);
-    let best = null, bestDiff = Infinity;
-    for (const d of this.dates(other)) {
-      if (periodKey(d, coarse) !== key) continue;
-      const diff = Math.abs(dayNum(d) - target);
-      if (diff < bestDiff) { best = d; bestDiff = diff; }
-    }
-    if (best) other.date = best;
+    const best = arrayFor(this.dates(other), src.date, coarse, true);
+    if (best) Object.assign(other, { date: best, anchor: src.date });
   },
 
   toggleCompare() {

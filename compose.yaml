@@ -35,13 +35,10 @@ services:
     env_file:
       - .env
     volumes:
-      - socrates-data:/data            # settings, extractor configs (Socrates password), logs, schedule state
+      - ${DATA_LOCATION:?}:/data       # settings, extractor configs (Socrates password), logs, schedule state
       - ${ARRAYS_LOCATION:?}:/archive/arrays
       - ${BLOG_LOCATION:?}:/archive/blog
     mem_limit: ${MEM_LIMIT}
     pids_limit: ${PIDS_LIMIT}
     healthcheck:
       disable: false                   # the check itself is defined in the image
-
-volumes:
-  socrates-data:                       # removed only by "docker compose down -v" or "docker volume rm"

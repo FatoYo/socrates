@@ -137,6 +137,11 @@ def setup_driver(interactive=False):
         options.add_argument('--headless=new')
     options.add_argument('--window-size=1320,800')
     options.add_argument('--disable-blink-features=AutomationControlled')
+    # Less memory: no extensions, background services or translation, and a small cache
+    for flag in ('--disable-extensions', '--disable-background-networking', '--disable-component-update',
+                 '--disable-default-apps', '--disable-sync', '--no-first-run',
+                 '--disable-features=Translate,OptimizationHints,MediaRouter', '--disk-cache-size=33554432'):
+        options.add_argument(flag)
     options.add_experimental_option('excludeSwitches', ['enable-automation'])
     options.add_experimental_option('useAutomationExtension', False)
     

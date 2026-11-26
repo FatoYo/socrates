@@ -10,7 +10,7 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 # Disable Selenium Manager's anonymous usage stats (sent to plausible.io)
@@ -29,6 +29,7 @@ from selenium.webdriver.chrome.service import Service
 from PIL import Image
 
 PAGE_LOAD_TIMEOUT = 60  # seconds; stops a page that never finishes loading from hanging the run
+OUTDATED_EXIT = 2       # exit status: no errors, but some arrays were still the previous period's
 
 log = logging.getLogger('socrates-arrays')
 
@@ -106,6 +107,11 @@ def setup_driver(headless=True):
         options.add_argument('--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36')
     options.add_argument('--window-size=1320,800')
     options.add_argument('--disable-blink-features=AutomationControlled')
+    # Less memory: no extensions, background services or translation, and a small cache
+    for flag in ('--disable-extensions', '--disable-background-networking', '--disable-component-update',
+                 '--disable-default-apps', '--disable-sync', '--no-first-run',
+                 '--disable-features=Translate,OptimizationHints,MediaRouter', '--disk-cache-size=33554432'):
+        options.add_argument(flag)
     options.add_experimental_option('excludeSwitches', ['enable-automation'])
     options.add_experimental_option('useAutomationExtension', False)
     service = container_chrome(options)
@@ -158,8 +164,9 @@ def login(driver, config):
         raise ExtractionError(f"Login failed: {describe_error(e)}") from None
     log.debug("Login successful")
 
-def get_timing_array(driver, ticker, ticker_config, timelevel, array_type):
-    """Extract timing array for a specific ticker and timelevel. Raises on failure."""
+def get_timing_array(driver, ticker, ticker_config, timelevel, array_type, today):
+    """Extract timing array for a specific ticker and timelevel. Returns True when the array is
+    current and saved, False when the site still shows an outdated one. Raises on failure."""
     log.debug(f"Processing {ticker} - {array_type} array...")
     
     archive_dir = Path(ticker_config['archivePath'])
@@ -236,42 +243,88 @@ def get_timing_array(driver, ticker, ticker_config, timelevel, array_type):
     if not result.get('secondDate'):
         raise ExtractionError("the array was returned without a date label")
     
-    time.sleep(0.5)
-    
-    # Format date
+    # Date of the array, and whether the site already shows the current period's array
     second_date = result['secondDate']
     try:
-        formatted_date = format_date(second_date, timelevel)
+        day = array_date(second_date, timelevel, today)
     except (KeyError, ValueError):
         raise ExtractionError(f"unexpected date label '{second_date}'") from None
+    expected = expected_date(array_type, today)
+    outdated = day < expected
+    screenshot_path = archive_dir / f"{day:%Y%m%d} {array_type} {ticker}.png"
+    # "Saved:" lines mark the arrays that are done; outdated ones get "Outdated:" instead, so the
+    # Socrates app downloads them again on its next retry.
+    stale = (f"Outdated: {ticker} {array_type} array is dated {day:%Y-%m-%d}, expected "
+             f"{expected:%Y-%m-%d} or later (the site still shows the previous one)")
+    if outdated and screenshot_path.exists():
+        log.warning(f"{stale}; kept the existing {screenshot_path.name}")
+        return False
+
+    if not driver.execute_script(YEAR_SCRIPT, str(day.year)):
+        log.debug("Title bar not found, the array is saved without the year")
+    time.sleep(0.5)
     
     # Take screenshot
-    screenshot_path = archive_dir / f"{formatted_date} {array_type} {ticker}.png"
     if not driver.save_screenshot(str(screenshot_path)):
         raise ExtractionError(f"could not save the screenshot to {screenshot_path}")
     
     # Crop image
     crop_image(screenshot_path, driver)
     
+    if outdated:
+        log.warning(f"{stale}; saved {screenshot_path.name} because it was missing")
+        return False
     log.debug(f"Saved: {screenshot_path.name}")
-    return screenshot_path
+    return True
 
-def format_date(date_str, timelevel):
-    """Format date string to YYYYMMDD"""
-    months = {
-        'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04',
-        'May': '05', 'Jun': '06', 'Jul': '07', 'Aug': '08',
-        'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12'
-    }
-    
-    current_year = datetime.now().year
-    
+MONTHS = {'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+          'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12}
+
+def array_date(label, timelevel, today):
+    """Date of an array from its second date label: "25-Nov" (daily, weekly) or "Nov" (monthly).
+    The label has no year, so the year is the one that puts the date closest to today: an
+    outdated "31-Dec" array read on 1 January belongs to the year before, not the new one."""
     if timelevel == 3:  # Monthly - only month name
-        month = months[date_str]
-        return f"{current_year}{month}01"
+        month, day = MONTHS[label], 1
     else:  # Daily/Weekly - "DD-Mon" format
-        day, month = date_str.split('-')
-        return f"{current_year}{months[month]}{day.zfill(2)}"
+        day_text, month_text = label.split('-')
+        month, day = MONTHS[month_text], int(day_text)
+    candidates = []
+    for year in (today.year - 1, today.year, today.year + 1):
+        try:
+            candidates.append(date(year, month, day))
+        except ValueError:  # 29-Feb in a year without it
+            pass
+    if not candidates:
+        raise ValueError(label)
+    return min(candidates, key=lambda d: abs((d - today).days))
+
+def expected_date(array_type, today):
+    """Oldest date a current array can have on `today`. The site labels a fresh array with the
+    next trading day: Tuesday to Friday the daily array has that day's date, on Saturday and Sunday
+    the daily and weekly arrays have the coming Monday's, and a monthly array has the 1st of the
+    month. An older date means the site still shows the previous period's array. No holiday
+    calendar is needed: a date later than expected (after a holiday) is still current."""
+    if array_type == 'D':
+        return today
+    if array_type == 'W':
+        week_of = today + timedelta(days=2)  # Saturday and Sunday count towards the next week
+        return week_of - timedelta(days=week_of.weekday())
+    return today.replace(day=1)
+
+# Writes the array's year at the right end of the title bar, in the style of the date labels
+YEAR_SCRIPT = """
+const title = document.querySelectorAll('#move-popup-01 .title-bl')[1];
+if (!title) return false;
+title.style.display = 'flex';
+title.style.justifyContent = 'space-between';
+title.style.alignItems = 'center';
+const year = document.createElement('span');
+year.textContent = arguments[0];
+year.style.cssText = 'color:#fff;font-size:11px;font-family:ProximaNova-Regular';
+title.appendChild(year);
+return true;
+"""
 
 def crop_image(image_path, driver):
     """Crop image to exact specifications with dynamic detection"""
@@ -328,8 +381,10 @@ def extract(args):
     log.info(f"Starting extraction for {len(tickers)} ticker(s), "
              f"arrays: {', '.join(code for _, code in frames)}")
     
+    today = datetime.now().date()  # the run's date, also when it goes past midnight
     created = 0
-    failed = []  # "TICKER F" for each array that could not be saved
+    failed = []    # "TICKER F" for each array that could not be saved
+    outdated = []  # "TICKER F" for each array the site still showed for the previous period
     driver = None
     try:
         # Setup browser
@@ -345,8 +400,10 @@ def extract(args):
         for ticker, ticker_config in tickers.items():
             for timelevel, array_type in frames:
                 try:
-                    get_timing_array(driver, ticker, ticker_config, timelevel, array_type)
-                    created += 1
+                    if get_timing_array(driver, ticker, ticker_config, timelevel, array_type, today):
+                        created += 1
+                    else:
+                        outdated.append(f"{ticker} {array_type}")
                 except Exception as e:
                     failed.append(f"{ticker} {array_type}")
                     log.error(f"Failed: {ticker} - {array_type} array: {describe_error(e)}")
@@ -362,10 +419,16 @@ def extract(args):
     if created == expected:
         log.info(f"Extraction complete! {created} file(s) created")
         return 0
-    not_run = expected - created - len(failed)
+    not_run = expected - created - len(failed) - len(outdated)
+    if not failed and not not_run:
+        log.warning(f"Extraction finished with outdated arrays: {created} of {expected} file(s) up to date, "
+                    f"outdated: {', '.join(outdated)}")
+        return OUTDATED_EXIT
     summary = f"Extraction finished with errors: {created} of {expected} file(s) created"
     if failed:
         summary += f", failed: {', '.join(failed)}"
+    if outdated:
+        summary += f", outdated: {', '.join(outdated)}"
     if not_run:
         summary += f", {not_run} not attempted"
     log.error(summary)
@@ -374,7 +437,8 @@ def extract(args):
 def main():
     parser = argparse.ArgumentParser(
         description='Extract Socrates Platform timing arrays',
-        epilog='Exit status: 0 when every array was saved, 1 when anything failed, '
+        epilog='Exit status: 0 when every array was saved and current, 1 when anything failed, '
+               '2 when nothing failed but some arrays were still outdated on the site, '
                '130 when interrupted with Ctrl+C.')
     parser.add_argument('-d', '--daily', action='store_true', help='Extract Daily arrays')
     parser.add_argument('-w', '--weekly', action='store_true', help='Extract Weekly arrays')

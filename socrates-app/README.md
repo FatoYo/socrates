@@ -142,7 +142,7 @@ The **Downloads** part of Settings sets up the extractors that come in the same 
 | Public blog | Every N hours from the start time (default 12) | `ae-blog.sh 1-2 --public` (no login) |
 | Private blog | Every N hours from the start time (default 12) | `ae-blog.sh 1 --private` (one login) |
 
-All jobs run with `--log-level debug`. If the arrays run fails, only the arrays that were not saved are downloaded again after **Retry after** hours (default 1), in one call with one login. **Attempts per day** (default 3) counts the first run too. A run is stopped after 60 minutes (arrays) or 20 minutes (blog).
+All jobs run with `--log-level debug`. If the arrays run fails or some arrays are outdated, only those arrays are downloaded again after **Retry after** hours (default 1), in one call with one login. **Attempts per day** (default 3) counts the first run too. A run is stopped after 60 minutes (arrays) or 20 minutes (blog).
 
 The start time is picked at random between 05:00 and 05:59 the first time the app starts, so installs in the same time zone don't all log in to the Socrates Platform at the same minute. It is saved in `settings.json` and stays the same after restarts.
 
@@ -158,7 +158,7 @@ The time zone, start time, intervals, retries, log retention and on/off switch f
 - Arrays page: today's scheduled arrays (e.g. Daily + Weekly on a Saturday). On a Sunday or Monday, when nothing is scheduled, it downloads the Daily array.
 - Blog page: the public blog (pages 1-2) and then the private blog (page 1).
 
-The button shows "Downloading…" while the jobs run (also during a scheduled run), then the result, and the page reloads its arrays or posts. A failure links to its log.
+The button shows "Downloading…" while the jobs run. Next to it is the result of the newest run, retries and scheduled runs included, which updates when the next run finishes.
 
 A run that was due while the app was stopped runs once when it starts again. The very first start, and saving a new schedule, wait for the next scheduled time instead of running at once.
 
@@ -179,6 +179,7 @@ The full output of each job is only on the Logs page. The Settings and Logs page
 Every run's output is saved as it arrives to `logs/<job>/<YYYY-MM-DD_HHMMSS>.log`, and the runs are listed in `logs/runs.jsonl`. The **Logs** page lists the runs (job, time, scheduled/retry/manual, attempt, result and last summary line) and shows the log lines of one run or of all runs.
 
 - **Level:** Debug (everything), Info, Warning or Error. Each shows that level and the more severe ones.
+- **Result of a run:** Success, Outdated (some arrays weren't updated on the site yet and are retried), Failed, Timed out or Interrupted.
 - **Filter:** job and date range.
 - A run in progress updates live. Click the date in the Jobs table on the Settings page to open that run.
 - Lines from the app itself start with `Socrates app:` (which command ran, the retry plan, the exit code). Lines without a `[date time] LEVEL` prefix, such as installer output from the wrapper scripts, are shown as Debug, and a Python traceback as Error.
@@ -186,7 +187,7 @@ Every run's output is saved as it arrives to `logs/<job>/<YYYY-MM-DD_HHMMSS>.log
 
 ## Arrays Page
 
-- Click a ticker, then **Daily**, **Weekly** or **Monthly**. Either choice opens the latest array for that ticker and time frame.
+- Click a ticker, then **Daily**, **Weekly** or **Monthly**. Changing the ticker or time frame keeps the date you were looking at, or the nearest one. **Latest** jumps to the newest array.
 - Click the date button to open a calendar. Only dates that have an array can be clicked, the others are greyed out.
 - **+ Add second array for comparison** adds a second column with its own filters. It starts as a copy of the first column. The columns sit side by side on wide screens and stack on narrow ones.
 - The array frame keeps the 960×566 ratio. Images are never enlarged, and larger images are shrunk to fit. Click an image to open it at full size.

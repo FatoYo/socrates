@@ -365,12 +365,13 @@ kbd {
 .dl .dl-note { font-size: 12.5px; }
 .dl .dl-note.ok { color: var(--ok); }
 .dl .dl-note.err { color: var(--danger); }
+.dl .dl-note.warn { color: var(--private); }
 .dl .dl-note a { color: inherit; }
 .run-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 0 7px; border-radius: 999px; line-height: 18px; margin-right: 6px; }
 .run-badge.success { background: rgba(21, 128, 61, .14); color: var(--ok); }
 .run-badge.failed, .run-badge.timeout { background: rgba(185, 28, 28, .12); color: var(--danger); }
 .run-badge.running, .run-badge.queued { background: var(--accent-soft); color: var(--accent); }
-.run-badge.interrupted { background: var(--private-soft); color: var(--private); }
+.run-badge.interrupted, .run-badge.outdated { background: var(--private-soft); color: var(--private); }
 @media (max-width: 700px) {
   .form-grid { grid-template-columns: 1fr; }
   .form-grid > span:empty { display: none; }

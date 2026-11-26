@@ -118,7 +118,7 @@ Every output line has a date, time and level:
 |-------|----------|
 | `INFO` | Start of the run and `Extraction complete! N file(s) created` |
 | `DEBUG` | Progress: login steps, each array processed and saved |
-| `WARNING` | Tickers given with `--ticker` that are not in `config.json` (they are skipped), or the run was stopped with Ctrl+C |
+| `WARNING` | An array is outdated (see below), tickers given with `--ticker` that are not in `config.json` (they are skipped), or the run was stopped with Ctrl+C |
 | `ERROR` | An array, the login or the browser failed. The message gives a short reason instead of a Python stack trace, and the final summary lists the arrays that failed |
 
 By default (`--log-level info`) the `INFO`, `WARNING` and `ERROR` lines are shown, so errors always appear. Add `--log-level debug` to also see the `DEBUG` progress lines. The example above is a run with `--log-level debug`.
@@ -127,13 +127,20 @@ By default (`--log-level info`) the `INFO`, `WARNING` and `ERROR` lines are show
 
 - If one array fails (for example the page does not load in time), the error is logged and the script continues with the next array. The final line lists the failed arrays so you can run just those again, e.g. `./socrates-arrays.sh -d --ticker UCO`.
 - If the login fails, Chrome cannot start, or the browser crashes, the script stops with an error message and closes the browser.
-- A page that never finishes loading is abandoned after 60 seconds. Failed arrays are not retried.
+- A page that never finishes loading is abandoned after 60 seconds. Failed arrays are not retried by the script itself; the Socrates web app retries them.
 
 | Status | Meaning |
 |--------|---------|
-| `0` | Every requested array was saved |
+| `0` | Every requested array was saved and is current |
 | `1` | At least one array failed, or the run stopped because of a login, browser or config error |
+| `2` | Nothing failed, but the site still showed outdated arrays for some tickers |
 | `130` | Stopped with Ctrl+C |
+
+## Outdated Arrays
+
+Sometimes the Socrates Platform hasn't updated yet and still shows the previous period's array. Such an array is logged as outdated, the run continues, and the script exits with status `2`. The Socrates web app then downloads those arrays again with its retry settings.
+
+The saved images show the array's year on the right of the title bar.
 
 ## Requirements
 

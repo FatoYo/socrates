@@ -320,23 +320,30 @@ Search.input.addEventListener('keydown', (e) => {
 Search.el.addEventListener('mousedown', (e) => { if (e.target === Search.el) Search.close(); });
 
 /* ---------------------------------------------------------------- "Download now" buttons
-   Arrays and Blog pages: run that page's jobs the way the schedule runs them, show progress,
-   and refresh the page when they finish (also when a scheduled run was already in progress). */
+   Arrays and Blog pages: run that page's jobs the way the schedule runs them, and show the result
+   of the newest run of those jobs, scheduled runs and retries included. The text is the summary
+   line the app stores for every run, e.g. "Extraction finished with errors: 21 of 23 file(s)
+   created, failed: UNH D, VOO D". Instead of polling all the time, the page checks the job status
+   only when it can have changed: when the button is shown or the tab becomes visible again, every
+   few seconds while a job runs, and just after the next planned retry or scheduled run. */
 
 const Downloads = {
   JOBS: { arrays: ['arrays'], blog: ['blog-public', 'blog-private'] },
-  state: {},     // kind -> { busy, cls, msg, link, onDone }
+  state: {},     // kind -> { busy, cls, msg, link, seen, onDone }
   status: null,  // last /api/jobs response
   timer: null,
+  polling: false,
 
   button(kind, onDone) {
-    const st = this.state[kind] || (this.state[kind] = { busy: false, cls: '', msg: '' });
+    const st = this.state[kind] || (this.state[kind] = { busy: false, cls: '', msg: '', link: null, seen: null });
     st.onDone = onDone;
     const el = h('span', { class: 'dl', 'data-dl': kind });
     this.paint(kind, el);
-    if (!this.timer) this.poll();  // notice runs that are already in progress
+    this.schedule(0);  // show the newest result, and notice a run that is already going
     return el;
   },
+
+  onScreen() { return document.querySelector('[data-dl]') !== null; },
 
   title(kind) {
     if (kind === 'blog') return 'Check the public blog (pages 1-2) and the private blog (page 1) for new posts now';
@@ -368,50 +375,94 @@ const Downloads = {
       Object.assign(st, { cls: 'err', msg: '✕ ' + e.message, link: null });
     }
     this.paint(kind);
-    this.schedulePoll(1000);
+    this.schedule(1000);
   },
 
-  schedulePoll(ms) {
+  schedule(ms) {
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.poll(), ms);
   },
 
+  /** "2026-11-26 05:28:06" (the schedule's time zone, as sent by the server) -> milliseconds. */
+  ms(text) { return Date.parse(text.replace(' ', 'T') + 'Z'); },
+
+  /** "05:30" for today, "Nov 25 05:30" otherwise. */
+  when(text) {
+    const t = text.replace('T', ' ');
+    if (this.status && t.slice(0, 10) === this.status.now.slice(0, 10)) return t.slice(11, 16);
+    return `${MONTH_SHORT[+t.slice(5, 7) - 1]} ${+t.slice(8, 10)} ${t.slice(11, 16)}`;
+  },
+
+  /** The note for a page's jobs: the newest finished run of each, worst result first. */
+  result(kind) {
+    const jobs = this.JOBS[kind].map((j) => this.status.jobs[j]);
+    const runs = jobs.map((j) => j.lastRun).filter((r) => r && r.status !== 'running');
+    if (!runs.length) return null;
+    const rank = (r) => (r.status === 'success' ? 0 : r.status === 'outdated' ? 1 : 2);
+    const worst = runs.reduce((a, b) => (rank(b) > rank(a) ? b : a));
+    const newest = runs.reduce((a, b) => ((b.end || b.start) > (a.end || a.start) ? b : a));
+    const text = runs.map((r) => {
+      const s = (r.summary || STATUS_LABEL[r.status] || r.status).replace(/^Summary:\s*/, '');
+      return runs.length > 1 ? `${this.status.jobs[r.job].label}: ${s}` : s;
+    });
+    const retry = jobs.map((j) => j.retry).find(Boolean);
+    let msg = `${['✓', '⚠', '✕'][rank(worst)]} ${this.when(newest.end || newest.start)} ${text.join(' · ')}`;
+    if (retry) msg += ` · retry at ${this.when(retry.at)}`;
+    return {
+      msg,
+      cls: ['ok', 'warn', 'err'][rank(worst)],
+      link: rank(worst) ? `#/logs?run=${encodeURIComponent(worst.id)}` : null,
+      seen: runs.map((r) => `${r.id}:${r.status}`).join(','),
+    };
+  },
+
   async poll() {
-    this.timer = 'polling';
+    clearTimeout(this.timer);
+    this.timer = null;
+    if (this.polling || !this.onScreen()) return;  // nothing to show: the next button() starts again
+    this.polling = true;
     try {
       this.status = await api('/api/jobs');
     } catch {
-      this.schedulePoll(5000);
+      this.polling = false;
+      this.schedule(5000);
       return;
     }
+    this.polling = false;
     let anyBusy = false;
+    let next = Infinity;  // milliseconds until the next retry or scheduled run of a shown job
+    const now = this.ms(this.status.now);
     for (const [kind, jobs] of Object.entries(this.JOBS)) {
       const st = this.state[kind];
       if (!st) continue;
       const info = jobs.map((j) => this.status.jobs[j]);
       const busy = info.some((j) => j.running || j.queued);
+      for (const j of info) {
+        for (const at of [j.retry && j.retry.at, j.nextRun && j.nextRun.at]) {
+          if (at) next = Math.min(next, this.ms(at) - now);
+        }
+      }
       if (busy) {
         Object.assign(st, { busy: true, cls: '', msg: info.some((j) => j.running) ? '' : 'Waiting for another job', link: null });
-      } else if (st.busy) {
-        // Just finished: report the result and refresh the page.
-        const runs = info.map((j) => j.lastRun).filter(Boolean);
-        const bad = runs.find((r) => r.status !== 'success');
-        if (bad) Object.assign(st, { cls: 'err', msg: '✕ ' + (bad.summary || 'Failed'), link: `#/logs?run=${encodeURIComponent(bad.id)}` });
-        else {
-          // One job: its summary. Several: "Public blog: 10 posts found, 1 new · Private blog: …"
-          const text = runs.map((r) => {
-            const s = (r.summary || 'done').replace(/^Summary:\s*/, '');
-            return runs.length > 1 ? `${this.status.jobs[r.job].label}: ${s}` : s;
-          });
-          Object.assign(st, { cls: 'ok', msg: '✓ ' + text.join(' · '), link: null });
-        }
+      } else {
+        const r = this.result(kind);
+        const finished = st.busy || (st.seen !== null && r && r.seen !== st.seen);
+        if (r) Object.assign(st, { cls: r.cls, msg: r.msg, link: r.link, seen: r.seen });
         st.busy = false;
-        if (st.onDone) { try { st.onDone(); } catch { /* the page refreshes on its own later */ } }
+        // A run ended (also one that ran while the page was open but not watched): reload the
+        // page's arrays or posts. Not on the first check after opening the page.
+        if (finished && st.onDone) { try { st.onDone(); } catch { /* the page refreshes on its own later */ } }
+        if (st.seen === null) st.seen = r ? r.seen : '';
       }
       anyBusy = anyBusy || busy;
       this.paint(kind);
     }
-    this.timer = null;
-    if (anyBusy) this.schedulePoll(3000);
+    if (anyBusy) this.schedule(3000);
+    else if (next < Infinity) this.schedule(Math.min(Math.max(next, 0) + 5000, 6 * 3600 * 1000));
   },
 };
+
+// A tab that was in the background may have missed a run: check once when it is shown again.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && Downloads.onScreen()) Downloads.schedule(0);
+});

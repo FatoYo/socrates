@@ -1,6 +1,7 @@
 'use strict';
 
 const ROW_HEIGHT = 64; // must match .post-row height in app.css
+// cats holds category NAMES: positions in the list shift when a new category appears.
 const EMPTY_FILTERS = () => ({ year: null, month: null, day: null, vis: 'all', cats: [] });
 
 const Blog = {
@@ -9,6 +10,7 @@ const Blog = {
   byId: new Map(),
   categories: [],
   catIndex: new Map(),
+  catSel: new Set(),   // positions of the selected categories in the current index
   fetchedAt: 0,
   filters: Object.assign(EMPTY_FILTERS(), store.get('blogFilters', {})),
   filtered: [],
@@ -63,7 +65,8 @@ const Blog = {
     this.byId = new Map(this.posts.map((p) => [p.id, p]));
     this.fetchedAt = Date.now();
     const f = this.filters;
-    f.cats = (Array.isArray(f.cats) ? f.cats : []).filter((c) => c >= 0 && c < this.categories.length);
+    // Keep selected categories that still exist (older versions stored positions: dropped)
+    f.cats = (Array.isArray(f.cats) ? f.cats : []).filter((c) => typeof c === 'string' && this.catIndex.has(c));
     if (!['all', 'public', 'private'].includes(f.vis)) f.vis = 'all';
   },
 
@@ -89,7 +92,7 @@ const Blog = {
     if (f.year && !skip.includes('y') && p.y !== f.year) return false;
     if (f.month && !skip.includes('m') && p.m !== f.month) return false;
     if (f.day && !skip.includes('d') && p.d !== f.day) return false;
-    if (f.cats.length && !skip.includes('c') && !p.cats.some((c) => f.cats.includes(c))) return false;
+    if (this.catSel.size && !skip.includes('c') && !p.cats.some((c) => this.catSel.has(c))) return false;
     return true;
   },
 
@@ -122,7 +125,9 @@ const Blog = {
   },
 
   toggleCat(i) {
-    const cats = this.filters.cats.includes(i) ? this.filters.cats.filter((c) => c !== i) : [...this.filters.cats, i];
+    const name = this.categories[i];
+    if (name == null) return;
+    const cats = this.filters.cats.includes(name) ? this.filters.cats.filter((c) => c !== name) : [...this.filters.cats, name];
     this.setFilter({ cats });
   },
 
@@ -138,6 +143,8 @@ const Blog = {
    * closest in date to it is shown ("latest" mode shows the newest post).
    */
   apply(mode) {
+    // Positions of the selected categories in this index, for matching posts
+    this.catSel = new Set(this.filters.cats.map((c) => this.catIndex.get(c)).filter((i) => i != null));
     this.prune();
     this.filtered = this.posts.filter((p) => this.match(p));
     store.set('blogFilters', this.filters);
@@ -190,7 +197,7 @@ const Blog = {
     if (f.year) describe.push(String(f.year));
     if (f.month) describe.push(MONTH_LONG[f.month - 1] + (f.day ? ' ' + f.day : ''));
     if (f.vis !== 'all') describe.push(f.vis);
-    if (f.cats.length) describe.push(f.cats.map((c) => this.categories[c]).join(' or '));
+    if (f.cats.length) describe.push(f.cats.join(' or '));
 
     const collapsed = this.collapsed;
     this.filtersEl.classList.toggle('collapsed', collapsed);
@@ -251,9 +258,9 @@ const Blog = {
     const q = this.catQuery.trim().toLowerCase();
     const show = this.categories
       .map((name, i) => ({ name, i, n: counts.get(i) || 0 }))
-      .filter((c) => f.cats.includes(c.i) || (this.catOpen && c.n > 0 && (!q || c.name.toLowerCase().includes(q))));
+      .filter((c) => f.cats.includes(c.name) || (this.catOpen && c.n > 0 && (!q || c.name.toLowerCase().includes(q))));
     this.catChipsEl.replaceChildren(...show.map((c) =>
-      h('button', { class: 'chip' + (f.cats.includes(c.i) ? ' active' : ''), onclick: () => this.toggleCat(c.i) },
+      h('button', { class: 'chip' + (f.cats.includes(c.name) ? ' active' : ''), onclick: () => this.toggleCat(c.i) },
         c.name, h('span', { class: 'count' }, c.n.toLocaleString()))));
   },
 
@@ -353,7 +360,7 @@ const Blog = {
       post.categories.map((c) => {
         const i = this.catIndex.get(c);
         return h('button', {
-          class: 'chip' + (this.filters.cats.includes(i) ? ' active' : ''),
+          class: 'chip' + (this.filters.cats.includes(c) ? ' active' : ''),
           title: 'Filter by this category',
           onclick: () => i != null && this.toggleCat(i),
         }, c);

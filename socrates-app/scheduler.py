@@ -12,9 +12,11 @@ import json
 import os
 import random
 import re
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -64,7 +66,9 @@ ERROR_LINE_RE = re.compile(r"^(Traceback \(most recent call last\)|[A-Za-z_.]*(E
 APP_PREFIX = "Socrates app: "
 SCHEDULED_PAGES = {"blog-public": "1-2", "blog-private": "1"}
 PAGES_RE = re.compile(r"^\d{1,4}(-\d{1,4})?(,\d{1,4}(-\d{1,4})?)*$")
-STATUS_TEXT = {"success": "finished", "failed": "failed", "timeout": "timed out"}
+STATUS_TEXT = {"success": "finished", "outdated": "finished with outdated arrays", "failed": "failed",
+               "timeout": "timed out"}
+OUTDATED_EXIT = 2   # socrates-arrays.py: no errors, but some arrays were still the previous period's
 
 
 # --------------------------------------------------------------------------- json files
@@ -469,6 +473,10 @@ class Scheduler:
                 return
             self.started = True
         LOG_DIR.mkdir(exist_ok=True)
+        # Temp folders of runs that were cut off when the app stopped
+        for job in JOBS:
+            for old in Path(tempfile.gettempdir()).glob(f"socrates-{job}-*"):
+                shutil.rmtree(old, ignore_errors=True)
         threading.Thread(target=self._tick_loop, name="socrates-scheduler", daemon=True).start()
         threading.Thread(target=self._worker_loop, name="socrates-job-runner", daemon=True).start()
 
@@ -727,6 +735,10 @@ class Scheduler:
                                  f"{os.path.basename(cmd[1])} {' '.join(cmd[2:])}")
             next_step = None
             env = script_environment(tz)
+            # The run's own temp folder, for Chromium's profile, cache and shared memory. In the
+            # Docker image /tmp is in RAM, so it is deleted as soon as the run ends.
+            run_tmp = tempfile.mkdtemp(prefix=f"socrates-{job}-")
+            env.update(TMPDIR=run_tmp, TMP=run_tmp, TEMP=run_tmp)
             try:
                 proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                         stderr=subprocess.STDOUT, text=True, encoding="utf-8",
@@ -752,13 +764,14 @@ class Scheduler:
                     f.flush()
                     m = LINE_RE.match(line)
                     if m:
-                        if m.group(2) in ("INFO", "ERROR", "CRITICAL"):
+                        if m.group(2) in ("INFO", "WARNING", "ERROR", "CRITICAL"):
                             summary = m.group(3)
                         hit = SAVED_RE.search(m.group(3))
                         if hit:
                             saved.add(f"{hit.group(2)} {hit.group(1)}")
                 code = proc.wait()
                 timer.cancel()
+                self._end_group(proc)
                 timed_out = timer_hit.is_set()
                 if timed_out:
                     summary = f"Stopped after {limit} without finishing"
@@ -767,12 +780,18 @@ class Scheduler:
             if code == 0:
                 status = "success"
                 app_line(f, "INFO", "Finished successfully")
+            elif code == OUTDATED_EXIT and job == "arrays" and not timed_out:
+                # Nothing failed, but the site still served old arrays for some tickers. They have
+                # no "Saved:" line, so they are retried below like failed ones.
+                status = "outdated"
+                app_line(f, "WARNING", "Finished, but some arrays were outdated on the Socrates Platform")
             else:
                 status = "timeout" if timed_out else "failed"
                 if code is not None and not timed_out:
                     app_line(f, "ERROR", f"Finished with exit code {code}")
                 if proc is None:
                     summary = "The script could not be started"
+            shutil.rmtree(run_tmp, ignore_errors=True)
             record.update(status=status, exitCode=code, summary=summary, end=_human(self._now(sched)))
 
             if job == "arrays" and status != "success":
@@ -797,7 +816,8 @@ class Scheduler:
                                  f"(attempt {attempt + 1} of {max_attempts}): {', '.join(remaining)}")
                     app_line(f, "INFO", next_step)
                 else:
-                    next_step = f"Giving up after {attempt} attempt(s). Not saved: {', '.join(remaining)}"
+                    next_step = (f"Giving up after {attempt} attempt(s). Not saved or still outdated: "
+                                 f"{', '.join(remaining)}")
                     app_line(f, "ERROR", next_step)
         self._append_run(record)
         result = STATUS_TEXT.get(record["status"], record["status"])
@@ -809,6 +829,14 @@ class Scheduler:
         """One line in the terminal the app runs in when a job starts or finishes.
         The job's own output only goes to its log file."""
         print(f"[{_human(self._now(sched))}] Job: {message}", flush=True)
+
+    @staticmethod
+    def _end_group(proc):
+        """After a run, stop whatever it left behind, such as a Chromium that did not quit."""
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass  # nothing left
 
     @staticmethod
     def _kill(proc):

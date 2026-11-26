@@ -51,7 +51,20 @@ The arrays and posts are plain files in two folders you choose, so you can also 
 
 ### Docker (recommended for a server)
 
-The image `ghcr.io/fatoyo/socrates` contains the app, both downloaders and Chromium, for `linux/amd64` and `linux/arm64`.
+The image `ghcr.io/fatoyo/socrates` contains the app, both downloaders and Chromium, for `linux/amd64` and `linux/arm64`. There are two compose files: `compose-basic.yaml` for a quick start, and `compose.yaml`, a more hardened setup for a server.
+
+#### Quick start
+
+```bash
+mkdir socrates && cd socrates
+curl -o compose.yaml https://raw.githubusercontent.com/FatoYo/socrates/main/compose-basic.yaml
+mkdir -p data arrays blog
+docker compose up -d
+```
+
+Open `http://<server>:3141`. On the Settings page, set the folders to `/archive/arrays` and `/archive/blog`, enter your Socrates login and add your tickers. The settings, arrays and blog posts are kept in the `data`, `arrays` and `blog` folders. The comments in the file explain how to change them.
+
+#### Server setup
 
 1. Create a folder on the server and download the compose file and the settings template:
    ```bash
@@ -61,8 +74,9 @@ The image `ghcr.io/fatoyo/socrates` contains the app, both downloaders and Chrom
    ```
 2. Edit `.env`. Each setting is explained in the file. The main ones:
    - `HOST_IP` and `TS_IP`: the server's own LAN and Tailscale addresses, the only addresses the app is published on. Remove the Tailscale port line from `compose.yaml` if you don't use Tailscale.
+   - `DATA_LOCATION`: the folder on the server for the app's settings, logs and schedule.
    - `ARRAYS_LOCATION` and `BLOG_LOCATION`: the folders on the server for the arrays and the blog posts, for example on an NFS share.
-   - `PUID` and `PGID`: the user the container runs as, which must be able to write to those two folders.
+   - `PUID` and `PGID`: the user the container runs as, which must be able to write to those three folders.
    - `TZ`: your time zone, used for the download schedule.
 3. Start it:
    ```bash
@@ -78,7 +92,7 @@ gh attestation verify oci://ghcr.io/fatoyo/socrates:1.0 --owner FatoYo
 ```
 Each version is also listed under [Releases](https://github.com/FatoYo/socrates/releases).
 
-**Data and security.** Settings, the Socrates login, logs and the schedule are kept in the Docker volume `socrates-data`, which survives updates. `docker compose down -v` deletes it, so back it up and avoid that command. The container runs as a regular user with all extra privileges removed, a read-only filesystem and its own network, and it only sees the two archive folders. The app has no login of its own, so publish it only on your home network or a VPN such as Tailscale. To reach it from the internet, put it behind a service that adds a login, for example a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) with Cloudflare Access, [Pangolin](https://github.com/fosrl/pangolin), or a reverse proxy with an identity provider such as [Pocket ID](https://github.com/pocket-id/pocket-id) or [Authelia](https://www.authelia.com/). Never publish it on the internet without one.
+**Data and security.** Settings, the Socrates login, logs and the schedule are kept in the data folder (`DATA_LOCATION`, `./data` in the quick start). Back it up, and keep it private because it holds your Socrates password. The container runs as a regular user with all extra privileges removed and a read-only filesystem, and it only sees its data folder and the two archive folders. The server setup also gives it its own network. The app has no login of its own, so publish it only on your home network or a VPN such as Tailscale. To reach it from the internet, put it behind a service that adds a login, for example a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) with Cloudflare Access, [Pangolin](https://github.com/fosrl/pangolin), or a reverse proxy with an identity provider such as [Pocket ID](https://github.com/pocket-id/pocket-id) or [Authelia](https://www.authelia.com/). Never publish it on the internet without one.
 
 ### Locally on a Mac or Windows PC
 

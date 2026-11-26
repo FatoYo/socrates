@@ -1,7 +1,9 @@
 'use strict';
 
 const FRAME_LABEL = { D: 'Daily', W: 'Weekly', M: 'Monthly' };
-const STATUS_LABEL = { success: 'Success', failed: 'Failed', timeout: 'Timed out', running: 'Running', interrupted: 'Interrupted' };
+const STATUS_LABEL = {
+  success: 'Success', outdated: 'Outdated', failed: 'Failed', timeout: 'Timed out', running: 'Running', interrupted: 'Interrupted',
+};
 
 function statusBadge(status) {
   return h('span', { class: 'run-badge ' + status }, STATUS_LABEL[status] || status);
@@ -23,16 +25,17 @@ const Settings = {
       h('h1', null, 'Settings'),
       h('h3', { class: 'section' }, 'Folders'),
       h('p', { class: 'hint section-note' },
-        'Enter the mounted path (e.g. /Volumes/Share/SOC), the share address (e.g. smb://nas.local/Share/SOC), ' +
-        'or a local folder (e.g. /Users/username/SOC).'),
+        'In Docker, enter /archive/arrays and /archive/blog, the folders mounted by the compose file. ' +
+        'Without Docker, enter a local folder (e.g. /Users/username/SOC) or a connected network share, ' +
+        'by its mounted path (e.g. /Volumes/Share/SOC) or its address (e.g. smb://nas.local/Share/SOC).'),
       this.card('arrays', 'Timing arrays folder',
         'The root folder with one subfolder per ticker (for example <code>AEM</code>, <code>BTC</code>, <code>DIA</code>) ' +
         'holding array images.',
-        '/Users/you/Library/CloudStorage/…/SOC', s.arraysRoot),
+        '/archive/arrays', s.arraysRoot),
       this.card('blog', 'Blog archive folder',
         'The root folder with one subfolder per year (<code>2009</code>, <code>2010</code>, …) holding the ' +
         '<code>.md</code> posts.',
-        '/Users/you/Documents/Armstrong Economics Blog', s.blogRoot),
+        '/archive/blog', s.blogRoot),
       h('h3', { class: 'section' }, 'Downloads'),
       this.accountEl,
       this.tickersEl,
