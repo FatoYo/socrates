@@ -140,13 +140,13 @@ Every output line has a date, time and level:
 [2026-11-11 08:48:25] ERROR   Private blog page 1: the website did not respond in time
 [2026-11-11 08:48:25] INFO    Summary: 10 posts found, 2 new, 2 excluded by title filter, 6 already downloaded
 [2026-11-11 08:48:26] DEBUG   [1/2] Saved: /Users/you/Documents/Armstrong Economics Blog/2026/2026-11-11 October Inflation.md
-[2026-11-11 08:48:26] INFO    Conversion complete: 2 successful, 0 errors
+[2026-11-11 08:48:26] INFO    Download complete: 2 successful, 0 errors
 [2026-11-11 08:48:26] INFO    Finished with 1 error(s)
 ```
 
 | Level | Used for |
 |-------|----------|
-| `INFO` | Start of the run, summary of posts found, conversion result |
+| `INFO` | Start of the run, summary of posts found, download result |
 | `DEBUG` | Progress: pages fetched, login steps, each saved post, the list of new post URLs (shown at `INFO` in a dry run) |
 | `ERROR` | A listing page, the private blog login or a post download failed. The message gives a short reason, for example "the website did not respond in time", instead of a Python stack trace |
 

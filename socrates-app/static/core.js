@@ -37,6 +37,8 @@ function icon(name, size = 16) {
     right: '<path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>',
     up: '<path d="M5 15l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>',
     down: '<path d="M5 9l7 7 7-7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>',
+    maximize: '<rect x="4" y="4" width="16" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="2.2"/>',
+    minimize: '<path d="M5 19h14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>',
   };
   const span = document.createElement('span');
   span.style.display = 'inline-flex';
@@ -343,7 +345,14 @@ const Downloads = {
     return el;
   },
 
-  onScreen() { return document.querySelector('[data-dl]') !== null; },
+  /** The newest run's result for the button, on a row of its own so the buttons never move. */
+  note(kind) {
+    const el = h('div', { class: 'dl-row', 'data-dl-note': kind });
+    this.paint(kind, null, el);
+    return el;
+  },
+
+  onScreen() { return document.querySelector('[data-dl], [data-dl-note]') !== null; },
 
   title(kind) {
     if (kind === 'blog') return 'Check the public blog (pages 1-2) and the private blog (page 1) for new posts now';
@@ -353,26 +362,39 @@ const Downloads = {
       (frames ? ` (${frames.map((f) => names[f]).join(' + ')})` : '');
   },
 
-  paint(kind, only) {
+  paint(kind, only, onlyNote) {
     const st = this.state[kind];
-    const els = only ? [only] : document.querySelectorAll(`[data-dl="${kind}"]`);
+    if (!st) return;
+    const els = only ? [only] : onlyNote ? [] : document.querySelectorAll(`[data-dl="${kind}"]`);
     for (const el of els) {
-      fill(el,
-        h('button', { class: 'btn small', disabled: st.busy, title: this.title(kind), onclick: () => this.start(kind) },
-          st.busy ? '⏳ Downloading…' : '⬇ Download now'),
-        st.msg ? h('span', { class: 'dl-note ' + st.cls }, st.msg,
-          st.link ? [' ', h('a', { href: st.link }, 'Logs')] : null) : null);
+      fill(el, h('button', { class: 'btn small', disabled: st.busy, title: this.title(kind), onclick: () => this.start(kind) },
+        st.busy ? '⏳ Downloading…' : '⬇ Download now'));
     }
+    const notes = onlyNote ? [onlyNote] : only ? [] : document.querySelectorAll(`[data-dl-note="${kind}"]`);
+    for (const el of notes) {
+      fill(el,
+        st.msg && !this.dismissed(kind, st) ? h('span', { class: 'dl-note ' + st.cls }, st.msg,
+          st.link ? [' ', h('a', { href: st.link }, 'Logs')] : null,
+          st.key ? h('button', { class: 'dl-close', title: 'Hide this message', 'aria-label': 'Hide this message',
+                                 onclick: () => this.dismiss(kind, st) }, '×') : null) : null);
+    }
+  },
+
+  /** A run's note hidden with × stays hidden until a newer run (or result) replaces it. */
+  dismissed(kind, st) { return !!st.key && store.get('dlHidden', {})[kind] === st.key; },
+  dismiss(kind, st) {
+    store.set('dlHidden', { ...store.get('dlHidden', {}), [kind]: st.key });
+    this.paint(kind);
   },
 
   async start(kind) {
     const st = this.state[kind];
     try {
       const r = await postJSON('/api/download/' + kind, {});
-      Object.assign(st, { busy: true, cls: '', msg: r.started.length ? '' : 'Already running', link: null });
+      Object.assign(st, { busy: true, cls: '', msg: r.started.length ? '' : 'Already running', link: null, key: null });
       this.status = r.status;
     } catch (e) {
-      Object.assign(st, { cls: 'err', msg: '✕ ' + e.message, link: null });
+      Object.assign(st, { cls: 'err', msg: '✕ ' + e.message, link: null, key: null });
     }
     this.paint(kind);
     this.schedule(1000);
@@ -443,11 +465,12 @@ const Downloads = {
         }
       }
       if (busy) {
-        Object.assign(st, { busy: true, cls: '', msg: info.some((j) => j.running) ? '' : 'Waiting for another job', link: null });
+        Object.assign(st, { busy: true, cls: '', msg: info.some((j) => j.running) ? '' : 'Waiting for another job', link: null, key: null });
       } else {
         const r = this.result(kind);
         const finished = st.busy || (st.seen !== null && r && r.seen !== st.seen);
-        if (r) Object.assign(st, { cls: r.cls, msg: r.msg, link: r.link, seen: r.seen });
+        // key: the runs and their results; a new run, or a run that changes result, shows again
+        if (r) Object.assign(st, { cls: r.cls, msg: r.msg, link: r.link, seen: r.seen, key: r.seen });
         st.busy = false;
         // A run ended (also one that ran while the page was open but not watched): reload the
         // page's arrays or posts. Not on the first check after opening the page.

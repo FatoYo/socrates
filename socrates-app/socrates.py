@@ -24,6 +24,7 @@ import markdown
 import nh3
 from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 
+import charts as charts_mod
 import scheduler as sched_mod
 
 APP_DIR = Path(__file__).resolve().parent
@@ -32,6 +33,28 @@ DATA_DIR = sched_mod.DATA_DIR or APP_DIR   # SOCRATES_DATA_DIR, or next to the c
 SETTINGS_FILE = DATA_DIR / "settings.json"
 CACHE_DIR = DATA_DIR / ".cache"
 BLOG_CACHE_FILE = CACHE_DIR / "blog-index.json"
+CHART_KEY = "twelveDataApiKey"    # settings.json key of the Twelve Data API key (never sent to the browser)
+CHART_KEY_RE = re.compile(r"^[A-Za-z0-9]{16,64}$")
+CHART_TICKER_RE = re.compile(r"^[A-Z0-9]{1,16}$")
+CHARTS = charts_mod.Candles(DATA_DIR / "prices.sqlite")
+REVERSALS_DB = sched_mod.ARRAYS_CONFIG.parent / "reversals.sqlite"  # written by the arrays extractor
+# Defaults of settings.json "chartReversals"; the counts are the top N per group (1-5)
+CHART_REVERSALS = {"shown": True, "weekly": True, "monthly": True, "weeklyCount": 3, "monthlyCount": 3}
+
+
+def _reversal_value(key, value, default):
+    if key.endswith("Count"):
+        try:
+            return min(5, max(1, int(value)))
+        except (TypeError, ValueError):
+            return default
+    return bool(value)
+
+
+def chart_reversals(s):
+    stored = s.get("chartReversals")
+    stored = stored if isinstance(stored, dict) else {}
+    return {k: _reversal_value(k, stored.get(k, v), v) for k, v in CHART_REVERSALS.items()}
 
 REPO_URL = "https://github.com/FatoYo/socrates"
 
@@ -69,6 +92,18 @@ PRIVATE_CATEGORY = "Private Blog"
 _settings_lock = threading.Lock()
 
 
+def protect_settings():
+    """settings.json can hold the Twelve Data API key: keep it readable by the app's user only."""
+    try:
+        if SETTINGS_FILE.exists() and SETTINGS_FILE.stat().st_mode & 0o077:
+            os.chmod(SETTINGS_FILE, 0o600)
+    except OSError:
+        pass
+
+
+protect_settings()
+
+
 def load_settings():
     try:
         with open(SETTINGS_FILE, encoding="utf-8") as f:
@@ -85,6 +120,7 @@ def save_settings(updates):
         tmp = SETTINGS_FILE.with_suffix(".json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+        os.chmod(tmp, 0o600)  # it can hold the Twelve Data API key
         os.replace(tmp, SETTINGS_FILE)
         return data
 
@@ -533,8 +569,48 @@ def get_settings():
         "blogRoot": s.get("blogRoot", ""),
         "arraysReachable": bool(configured("arraysRoot")),
         "blogReachable": bool(configured("blogRoot")),
+        "chartKeySet": bool(s.get(CHART_KEY)),
+        "chartReversals": chart_reversals(s),
         "build": BUILD_INFO,
     })
+
+
+@app.post("/api/settings/chart-key")
+def set_chart_key():
+    """Save or remove the Twelve Data API key. The key itself is never sent back."""
+    body = require_json()
+    if body.get("remove"):
+        save_settings({CHART_KEY: ""})
+        return jsonify({"ok": True, "chartKeySet": False})
+    key = str(body.get("apiKey") or "").strip()
+    if not CHART_KEY_RE.match(key):
+        return bad_request("Paste the API key from your Twelve Data account (letters and digits only).")
+    save_settings({CHART_KEY: key})
+    return jsonify({"ok": True, "chartKeySet": True})
+
+
+@app.post("/api/settings/chart-reversals")
+def set_chart_reversals():
+    body = require_json()
+    value = {k: _reversal_value(k, body[k], v) if k in body else v for k, v in chart_reversals(load_settings()).items()}
+    save_settings({"chartReversals": value})
+    return jsonify({"ok": True, "chartReversals": value})
+
+
+@app.get("/api/chart/<ticker>")
+def get_chart(ticker):
+    if not CHART_TICKER_RE.match(ticker):
+        abort(404)
+    s = load_settings()
+    try:
+        res = CHARTS.get(ticker, s.get(CHART_KEY, ""), s.get("chartSymbols"))
+    except charts_mod.NotCovered as e:
+        return jsonify({"ok": False, "covered": False, "error": str(e), "ticker": ticker})
+    except charts_mod.ChartError as e:
+        return jsonify({"ok": False, "error": str(e), "keySet": bool(s.get(CHART_KEY)), "retryIn": e.retry_in}), 502
+    last_close = res["candles"][-1]["close"] if res["candles"] else None
+    res["reversals"] = charts_mod.select_reversals(charts_mod.read_reversals(REVERSALS_DB, ticker), last_close)
+    return jsonify(res)
 
 
 @app.post("/api/settings/<kind>")
@@ -650,9 +726,15 @@ def bad_request(message):
 @app.get("/api/extractors")
 def get_extractors():
     try:
-        return jsonify(sched_mod.extractor_settings(configured("arraysRoot")))
+        res = sched_mod.extractor_settings(configured("arraysRoot"))
     except ValueError as e:
         return bad_request(str(e))
+    overrides = load_settings().get("chartSymbols")
+    for t in res["tickers"]:
+        t["chartCovered"] = charts_mod.provider_symbol(t["symbol"], overrides) is not None
+    # Every market without chart data, so tickers being added can be marked before they are saved
+    res["chartUncovered"] = charts_mod.uncovered(charts_mod.markets(), overrides)
+    return jsonify(res)
 
 
 @app.post("/api/extractors/credentials")

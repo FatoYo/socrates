@@ -212,7 +212,8 @@ const Blog = {
       h('span', { class: 'spacer' }),
       h('span', { class: 'hint' }, h('kbd', null, '↑'), ' ', h('kbd', null, '↓'), ' newer / older'),
       h('button', { class: 'btn small', disabled: !this.isFiltered(), onclick: () => this.clear() }, '✕ Clear filters'),
-      Downloads.button('blog', () => this.refreshAfterDownload()));
+      Downloads.button('blog', () => this.refreshAfterDownload()),
+      Downloads.note('blog'));
     if (collapsed) {
       this.filtersEl.replaceChildren(summary);
       return;

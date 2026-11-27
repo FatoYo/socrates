@@ -378,14 +378,15 @@ doc.querySelectorAll('.block').forEach(b => { blocks[b.querySelector('.title-bl'
 const titles = Object.keys(blocks);
 const active = titles.find(t => t.endsWith('Active Reversals'));
 const elected = titles.find(t => t.endsWith('Elected Reversals'));
-if (!active || !elected) return { success: false, error: `unexpected table: ${titles.join(', ') || 'empty'}` };
+// A block is left out when it has no reversals (e.g. a market with only elected ones)
+if (!active && !elected) return { success: false, error: `unexpected table: ${titles.join(', ') || 'empty'}` };
 const rows = [];
-blocks[active].querySelectorAll('.tr').forEach(tr => {
+if (active) blocks[active].querySelectorAll('.tr').forEach(tr => {
     const [side, ...cells] = tr.children;
     cells.forEach(c => rows.push({ status: 'active', side: side.textContent.trim(), text: texts(c), tags: tags(c) }));
 });
-blocks[elected].querySelectorAll('.tr > .td').forEach(c => rows.push({ status: 'elected', text: texts(c), tags: tags(c) }));
-return { success: true, title: active, rows };
+if (elected) blocks[elected].querySelectorAll('.tr > .td').forEach(c => rows.push({ status: 'elected', text: texts(c), tags: tags(c) }));
+return { success: true, title: active || elected, rows };
 """
 
 def reversal_period(text):

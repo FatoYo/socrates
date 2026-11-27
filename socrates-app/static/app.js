@@ -3,10 +3,12 @@
 const PAGES = { arrays: Arrays, blog: Blog, logs: Logs, settings: Settings };
 const PAGE_TITLES = { arrays: 'Arrays', blog: 'Blog', logs: 'Logs', settings: 'Settings' };
 
-/** "#/logs?run=arrays/2026-11-12_050000" -> { name: "logs", params: URLSearchParams } */
+/** "#/logs?run=arrays/2026-11-12_050000" -> { name: "logs", sub: "", params: URLSearchParams };
+ *  "#/settings/tickers" -> { name: "settings", sub: "tickers", ... } */
 function parseHash() {
   const [path, query] = location.hash.replace(/^#\/?/, '').split('?');
-  return { name: path, params: new URLSearchParams(query || '') };
+  const [name, sub = ''] = path.split('/');
+  return { name, sub, params: new URLSearchParams(query || '') };
 }
 
 const App = {
@@ -23,6 +25,14 @@ const App = {
     });
     $('#mobileMenu').addEventListener('click', () => this.el.classList.add('mobile-open'));
     $('#backdrop').addEventListener('click', () => this.el.classList.remove('mobile-open'));
+    // Settings opens and closes its group of pages (closed at first). With the menu collapsed to
+    // icons there is no room for the group, so the icon goes straight to the Archive page.
+    $('#settingsMenu').addEventListener('click', (e) => {
+      if (this.el.classList.contains('collapsed') && !mobile.matches) return;
+      e.preventDefault();
+      this.setSettingsMenu(!this.settingsMenuOpen);
+    });
+    this.setSettingsMenu(false);
 
     window.addEventListener('hashchange', () => this.go());
     document.addEventListener('keydown', (e) => this.onKey(e));
@@ -37,6 +47,12 @@ const App = {
     this.go();
   },
 
+  setSettingsMenu(open) {
+    this.settingsMenuOpen = open;
+    $('.nav').classList.toggle('settings-open', open);
+    $('#settingsMenu').setAttribute('aria-expanded', String(open));
+  },
+
   /** Version and source link at the bottom of the menu. */
   showVersion(build) {
     if (!build) return;
@@ -49,21 +65,29 @@ const App = {
   },
 
   go() {
-    let { name, params } = parseHash();
+    let { name, sub, params } = parseHash();
     if (!PAGES[name]) name = 'arrays';
-    const same = name === this.route && !document.getElementById('page-' + name).hidden;
+    if (name === 'settings' && !SETTINGS_PAGES[sub]) sub = 'archive';
+    const same = name === this.route && sub === this.sub && !document.getElementById('page-' + name).hidden;
     if (same && !params.toString()) return;
     if (this.route && this.route !== name && PAGES[this.route].hide) PAGES[this.route].hide();
     this.route = name;
+    this.sub = sub;
+    if (name === 'settings') this.setSettingsMenu(true); // show where you are
     for (const key of Object.keys(PAGES)) document.getElementById('page-' + key).hidden = key !== name;
-    document.querySelectorAll('.nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === name));
-    $('#mobilePage').textContent = PAGE_TITLES[name];
-    document.title = `Socrates · ${PAGE_TITLES[name]}`;
+    document.querySelectorAll('.nav a').forEach((a) => {
+      const own = a.dataset.route === name && (a.dataset.sub || '') === (a.dataset.sub ? sub : '');
+      a.classList.toggle('active', own && !(a.dataset.route === 'settings' && !a.dataset.sub));
+      a.classList.toggle('open', a.dataset.route === name && !a.dataset.sub);
+    });
+    const title = name === 'settings' ? `Settings · ${SETTINGS_PAGES[sub]}` : PAGE_TITLES[name];
+    $('#mobilePage').textContent = title;
+    document.title = `Socrates · ${title}`;
     this.el.classList.remove('mobile-open');
     Calendar.close();
     if (Search.isOpen()) Search.close();
     store.set('route', name);
-    PAGES[name].show(params);
+    PAGES[name].show(params, sub);
   },
 
   onKey(e) {

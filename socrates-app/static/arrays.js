@@ -43,6 +43,15 @@ const Arrays = {
   colEls: [],
   focus: 0,
   showHelp: store.get('arraysHelp', false),
+  chartOn: false,    // the second column shows the chart of the first column's ticker instead of an array
+  chartView: null,   // { chart, series, remove } while the chart is on screen
+  chartTicker: null, // ticker the chart shows or is loading
+  chartData: new Map(), // ticker -> candles loaded since the chart was opened; reopening it loads new ones
+  chartShown: null,  // ticker whose candles are on the chart
+  chartRetry: null,  // timer that loads the chart again once a request limit allows it
+  chartMark: false,  // H: a dashed line marks the candle of the array's date
+  revShown: null,    // R: reversal rays on the chart; starts from the Settings default on each page load
+  chartMax: false,   // the chart is maximized: the array column is hidden and the chart uses the full width
 
   async show(force = false) {
     if (!App.settings.arraysReachable) {
@@ -71,6 +80,8 @@ const Arrays = {
       const saved = store.get('arrays', null);
       this.cols = saved && Array.isArray(saved.cols) && saved.cols.length ? saved.cols.slice(0, 2) : [{}];
       this.focus = saved && saved.focus === 1 ? 1 : 0;
+      this.chartOn = !!(saved && saved.chart) && this.cols.length === 1;
+      this.chartMark = !!(saved && saved.mark);
     }
     this.cols = this.cols.map((c) => this.normalize(c));
     if (this.focus >= this.cols.length) this.focus = 0;
@@ -104,30 +115,35 @@ const Arrays = {
     return col;
   },
 
-  save() { store.set('arrays', { cols: this.cols, focus: this.focus }); },
+  save() { store.set('arrays', { cols: this.cols, focus: this.focus, chart: this.chartOn, mark: this.chartMark }); },
 
   /* ------------------------------------------------------------ rendering */
 
   render() {
     Calendar.close();
+    this.closeChart();
     const two = this.cols.length === 2;
-    this.columnsEl = h('div', { class: 'columns' + (two ? '' : ' single') });
+    this.columnsEl = h('div', { class: 'columns' + (two || this.chartOn ? '' : ' single') + (this.chartOn ? ' with-chart' : '') });
     this.el.replaceChildren(
       h('div', { class: 'arrays-toolbar' },
         h('button', { class: 'btn', onclick: () => this.toggleCompare() },
           two ? '− Remove second array' : '+ Add second array for comparison'),
+        h('button', { class: 'btn', title: 'Daily candles of the ticker shown in the array', onclick: () => this.toggleChart() },
+          this.chartOn ? '− Remove chart' : '+ Add chart'),
         h('div', { class: 'spacer' }),
         h('button', {
           class: 'btn small', title: 'Show keyboard shortcuts',
           onclick: () => { this.showHelp = !this.showHelp; store.set('arraysHelp', this.showHelp); this.render(); },
         }, this.showHelp ? 'Hide shortcuts' : 'Keyboard shortcuts'),
         h('button', { class: 'btn small', title: 'Rescan the arrays folder for new files', onclick: () => this.show(true) }, '↻ Refresh'),
-        Downloads.button('arrays', () => this.refreshAfterDownload())),
+        Downloads.button('arrays', () => this.refreshAfterDownload()),
+        Downloads.note('arrays')),
       ...(this.showHelp ? [this.helpPanel()] : []),
       this.columnsEl);
     this.colEls = this.cols.map((_, ci) => this.createCol(ci));
     this.columnsEl.append(...this.colEls.map((c) => c.root));
     this.cols.forEach((_, ci) => this.updateCol(ci));
+    if (this.chartOn) this.openChart();
   },
 
   helpPanel() {
@@ -138,7 +154,9 @@ const Arrays = {
       row(['⌥', 'S'], 'find a ticker'),
       row(['D', 'W', 'M'], 'daily, weekly, monthly'),
       row(['←', '→'], 'older / newer array'),
-      row(['↑', '↓'], 'previous / next ticker'));
+      row(['↑', '↓'], 'previous / next ticker'),
+      row(['H'], 'mark the array\'s date on the chart'),
+      row(['R'], 'show / hide the reversals on the chart'));
   },
 
   createCol(ci) {
@@ -220,7 +238,208 @@ const Arrays = {
   changed() {
     Calendar.close();
     this.cols.forEach((_, ci) => this.updateCol(ci));
+    if (this.chartOn) {
+      this.loadChart();
+      this.markChart();
+    }
     this.save();
+  },
+
+  /* ------------------------------------------------------------ chart */
+
+  async openChart() {
+    const size = h('button', { class: 'icon-toggle', onclick: () => this.toggleChartSize() });
+    const label = h('div', { class: 'col-label' }, h('span', { class: 'dot' }), 'Chart', h('span', { class: 'spacer' }), size);
+    const title = h('div', { class: 'chart-title' });
+    const legend = h('div', { class: 'chart-legend' });
+    const box = h('div', { class: 'chart-box' });
+    const msg = h('div', { class: 'frame-msg' });
+    msg.hidden = true;
+    const frame = h('div', { class: 'frame chart-frame' }, box, msg);
+    const caption = h('div', { class: 'caption' });
+    this.chartEls = { root: h('div', { class: 'col chart-col' }, h('div', { class: 'col-head' }, label, title), legend, frame, caption),
+                      title, legend, box, msg, frame, caption, size };
+    this.columnsEl.append(this.chartEls.root);
+    this.applyChartSize(); // after adding it, so its size can be measured
+    this.chartTicker = null;
+    this.chartData = new Map();
+    this.chartShown = null;
+    const els = this.chartEls;
+    try {
+      const view = await PriceChart.create(box);
+      if (this.chartEls !== els) { view.remove(); return; } // closed or re-rendered while loading
+      this.chartView = view;
+    } catch (e) {
+      this.chartMessage(e.message);
+      return;
+    }
+    this.loadChart();
+  },
+
+  /** The height an array frame has when one array is shown alone (column at most 1000 px wide,
+   *  frame at most 960 px, ratio 960:566): the maximized chart uses it. */
+  singleFrameHeight(col) {
+    const st = getComputedStyle(col);
+    const inner = parseFloat(st.paddingLeft) + parseFloat(st.paddingRight) + parseFloat(st.borderLeftWidth) + parseFloat(st.borderRightWidth);
+    const width = Math.min(960, Math.min(1000, this.columnsEl.clientWidth) - inner);
+    return Math.round(width * 566 / 960);
+  },
+
+  /** Maximize: hide the array and let the chart use the full width, as tall as a single array. */
+  toggleChartSize() {
+    const els = this.chartEls;
+    if (!els) return;
+    this.chartMax = !this.chartMax;
+    this.applyChartSize();
+  },
+
+  applyChartSize() {
+    const els = this.chartEls;
+    if (!els) return;
+    this.columnsEl.classList.toggle('chart-max', this.chartMax);
+    els.frame.style.height = this.chartMax ? this.singleFrameHeight(els.root) + 'px' : '';
+    fill(els.size, icon(this.chartMax ? 'minimize' : 'maximize', 14));
+    els.size.title = this.chartMax ? 'Minimize the chart and show the array again' : 'Maximize the chart to the full width';
+  },
+
+  closeChart() {
+    clearTimeout(this.chartRetry);
+    this.chartRetry = null;
+    if (this.chartView) this.chartView.remove();
+    this.chartView = null;
+    this.chartEls = null;
+    this.chartTicker = null;
+    this.chartShown = null;
+  },
+
+  /** Settings > Charts: { shown, weekly, monthly, weeklyCount, monthlyCount }. */
+  revSettings() {
+    return { shown: true, weekly: true, monthly: true, weeklyCount: 3, monthlyCount: 3,
+             ...((App.settings && App.settings.chartReversals) || {}) };
+  },
+
+  /** Draw the reversal rays of the ticker on the chart, or clear them (R, Settings > Charts). */
+  drawReversals() {
+    const view = this.chartView;
+    if (!view) return;
+    const res = this.chartShown && this.chartData.get(this.chartShown);
+    const st = this.revSettings();
+    if (this.revShown === null) this.revShown = st.shown;
+    const counts = { W: st.weekly ? st.weeklyCount : 0, M: st.monthly ? st.monthlyCount : 0 };
+    const rays = this.revShown && res ? PriceChart.reversalRays(res.reversals, view.series.data(), counts) : [];
+    view.rays.set(rays);
+    if (this.chartEls) {
+      const frames = this.revShown ? Object.keys(counts).filter((tf) => counts[tf]) : [];
+      this.chartEls.legend.replaceChildren(PriceChart.legend(frames) || '');
+    }
+  },
+
+  /** Draw or clear the dashed line at the candle of the first column's array date (H). */
+  markChart() {
+    const view = this.chartView, col = this.cols[0];
+    if (!view || !col || this.chartShown !== col.ticker) return;
+    const candles = view.series.data();
+    const i = this.chartMark && col.date ? PriceChart.candleIndex(candles, col.date) : -1;
+    view.mark.set(i >= 0 ? candles[i].time : null);
+    view.pin(i >= 0 ? candles[i].time : null);
+    if (i >= 0) PriceChart.reveal(view, i);
+  },
+
+  chartMessage(text, settingsLink = false) {
+    const els = this.chartEls;
+    if (!els) return;
+    els.msg.replaceChildren(text, settingsLink ? h('div', null, h('a', { class: 'btn small', href: '#/settings/charts' }, 'Open Settings')) : '');
+    els.msg.hidden = !text;
+    els.box.style.visibility = text ? 'hidden' : '';
+  },
+
+  /** Show the daily candles of the first column's ticker; does nothing when it is already shown. */
+  async loadChart() {
+    const els = this.chartEls, view = this.chartView;
+    const ticker = this.cols[0] && this.cols[0].ticker;
+    if (!els || !view || !ticker || ticker === this.chartTicker) return;
+    this.chartTicker = ticker;
+    clearTimeout(this.chartRetry);
+    this.chartRetry = null;
+    els.title.replaceChildren(h('strong', null, ticker), h('span', null, ' · Daily · loading…'));
+    els.frame.classList.add('loading');
+    let res = this.chartData.get(ticker);
+    try {
+      if (!res) {
+        res = await api('/api/chart/' + encodeURIComponent(ticker));
+        // An answer limited by Twelve Data's rate is not kept, so the ticker loads again later
+        if (!res.retryIn) this.chartData.set(ticker, res);
+      }
+    } catch (e) {
+      if (this.chartEls !== els || this.chartTicker !== ticker) return;
+      els.frame.classList.remove('loading');
+      els.title.replaceChildren(h('strong', null, ticker), h('span', null, ' · Daily'));
+      view.series.setData([]);
+      this.chartShown = null;
+      view.mark.set(null);
+      view.rays.set([]);
+      els.caption.replaceChildren();
+      this.chartMessage(e.message, !!(e.body && e.body.keySet === false));
+      const wait = e.body && e.body.retryIn;
+      // A request limit: wait for it, without asking again on every click or key. Other errors: try again on the next one.
+      if (wait) this.retryChart(ticker, wait); else this.chartTicker = null;
+      return;
+    }
+    if (this.chartEls !== els || this.chartTicker !== ticker) return; // another ticker was chosen meanwhile
+    els.frame.classList.remove('loading');
+    if (res.covered === false) {
+      // No chart data for this market: an empty chart with a short note, and no further requests
+      view.series.setData([]);
+      view.mark.set(null);
+      view.rays.set([]);
+      view.pin(null);
+      this.chartShown = null;
+      els.title.replaceChildren(h('strong', null, ticker), h('span', null, ' · Daily'));
+      els.legend.replaceChildren();
+      els.caption.replaceChildren();
+      this.chartMessage('This market is not covered by the chart data.');
+      return;
+    }
+    this.chartMessage('');
+    view.series.setData(res.candles);
+    PriceChart.showLatest(view, res.candles.length);
+    if (res.retryIn) this.retryChart(ticker, res.retryIn);
+    view.showOhlc(null);
+    this.chartShown = ticker;
+    this.drawReversals();
+    this.markChart();
+    els.title.replaceChildren(h('strong', null, ticker), h('span', null, ' · Daily' + (res.symbol !== ticker ? ` · ${res.symbol}` : '')));
+    const at = res.fetchedAt ? new Date(res.fetchedAt) : null;
+    els.caption.replaceChildren(
+      h('span', { title: 'Data from Twelve Data. Close and reopen the chart to load newer candles.' },
+        res.note || (at ? `Twelve Data, ${pad2(at.getHours())}:${pad2(at.getMinutes())}` : '')));
+  },
+
+  /** After a request limit: load the chart again by itself once Twelve Data allows it, if the
+   *  same ticker is still shown. A click on the ticker in the meantime also tries again. */
+  retryChart(ticker, seconds) {
+    if (!seconds) return;
+    clearTimeout(this.chartRetry);
+    this.chartRetry = setTimeout(() => {
+      this.chartRetry = null;
+      if (this.chartEls && this.chartTicker === ticker) {
+        this.chartTicker = null;
+        this.loadChart();
+      }
+    }, seconds * 1000);
+  },
+
+  toggleChart() {
+    this.chartMax = false; // Remove chart and + Add chart both start at the normal size
+    if (this.chartOn) {
+      this.chartOn = false;
+    } else {
+      this.chartOn = true;
+      this.cols.splice(1); // the chart takes the second column's place
+      this.focus = 0;
+    }
+    this.save();
+    this.render();
   },
 
   /* ------------------------------------------------------------ actions */
@@ -290,6 +509,8 @@ const Arrays = {
   },
 
   toggleCompare() {
+    this.chartOn = false; // the second array replaces the chart
+    this.chartMax = false;
     if (this.cols.length === 2) {
       this.cols.splice(1);
       this.focus = 0;
@@ -350,6 +571,20 @@ const Arrays = {
       case 'ArrowUp': e.preventDefault(); this.stepTicker(ci, -1); return;
       case 'ArrowDown': e.preventDefault(); this.stepTicker(ci, 1); return;
       default: {
+        if (e.key.toLowerCase() === 'r' && this.chartOn) {
+          e.preventDefault();
+          if (this.revShown === null) this.revShown = this.revSettings().shown;
+          this.revShown = !this.revShown;
+          this.drawReversals();
+          return;
+        }
+        if (e.key.toLowerCase() === 'h' && this.chartOn) {
+          e.preventDefault();
+          this.chartMark = !this.chartMark;
+          this.markChart();
+          this.save();
+          return;
+        }
         const f = { d: 'D', w: 'W', m: 'M' }[e.key.toLowerCase()];
         if (f && this.dates(this.cols[ci], f).length) {
           e.preventDefault();

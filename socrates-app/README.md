@@ -1,7 +1,7 @@
 # Socrates Web App
 **Created by** FatoYo November 2026
 
-A local web app to browse the Socrates Platform timing arrays saved by `socrates-arrays-extractor` and the Armstrong Economics blog archive saved by `ae-blog`. It only reads the files those two applications have already downloaded. It does not log in to Socrates or download anything itself.
+A web app to browse the timing arrays and reversals saved by `socrates-arrays-extractor` and the blog archive saved by `ae-blog`. It runs both downloaders on a schedule and charts each ticker's daily candles with its reversals.
 
 ## Overview
 
@@ -16,6 +16,9 @@ This application consists of three components:
 - Browse timing arrays by ticker and by Daily, Weekly or Monthly time frame
 - Calendar that only lets you pick dates that have an array
 - Second array column for side-by-side comparison, with date syncing between the columns
+- Daily candle chart of the array's ticker instead of the second array (needs a free Twelve Data API key)
+- Weekly and monthly reversals drawn on the chart as horizontal rays
+- Scheduled downloads of the arrays, reversals and blog, with retries and a Logs page
 - Keyboard shortcuts and fuzzy ticker search (`Option` + `S`)
 - Browse the blog by year, month, day, public/private and category
 - Blog posts rendered from markdown, with the filter header collapsible for reading
@@ -108,6 +111,8 @@ python3 socrates.py [options]
 
 ## Settings
 
+Settings has four pages in the menu: **Archive** (the Socrates login and the archive folders), **Markets**, **Routines** (automatic downloads and the jobs table) and **Charts**.
+
 Open **Settings** from the menu and enter the two root folders. A folder is checked when you press **Validate & save** (or Enter), and it is saved only if it passes. Saved folders are stored in `settings.json` next to `socrates.py` and used again the next time the app starts.
 
 | Setting | Expected contents | Example |
@@ -128,25 +133,29 @@ Posts with `(PB)` in the file name or the `Private Blog` category are shown as p
 
 ### Downloads
 
-The **Downloads** part of Settings sets up the extractors that come in the same package (`../socrates-arrays-extractor` and `../ae-blog`, next to `socrates-app`). The app always finds them relative to its own folder.
+The **Archive**, **Markets** and **Routines** pages set up the extractors that come in the same package (`../socrates-arrays-extractor` and `../ae-blog`, next to `socrates-app`). The app always finds them relative to its own folder.
 
 **Socrates Platform account.** One e-mail and password, written to both `../socrates-arrays-extractor/config.json` and `../ae-blog/config.json`. After saving, the password is never sent back to the browser. Leave the field empty to keep the current one. Both `config.json` files are git-ignored.
 
-**Timing array tickers.** The tickers the arrays extractor downloads. To add one, enter the symbol and the address of its Socrates Platform page (open the instrument on the site and copy the URL, e.g. `https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=…`). Arrays are saved to `<timing arrays folder>/<TICKER>`, and that folder is created when the ticker is added. **Add ticker** and **Remove** only mark the changes in the table (new rows are highlighted, removed rows are struck through and can be undone). **Save** writes them to the config and then downloads the daily, weekly and monthly arrays and reversals of all added tickers in one run, so the current week's and month's arrays aren't missing until the next weekly or monthly run. That run waits if another job is running, and its failures are retried like a scheduled run. **Discard changes** drops unsaved changes, and so does leaving the Settings page. Removing a ticker keeps its folder and arrays.
+**Twelve Data API key** (Charts page). Needed for the chart on the Arrays page; a free account at [twelvedata.com](https://twelvedata.com/pricing) is enough. It is saved as `twelveDataApiKey` in `settings.json`, where it can also be entered by hand, and is never sent back to the browser. `chart-markets.json` maps every Socrates Platform market to its Twelve Data symbol; about half (US stocks and ETFs, currencies, crypto, gold) have daily prices on the free plan. Markets without them are marked with ⚠ on the Markets page and show no chart. Other names can be mapped with `"chartSymbols": {"TICKER": "SYMBOL"}` in `settings.json`.
 
-**Automatic downloads.** While the app is running, it starts the extractors in the background, one job at a time:
+**Reversals on the chart** (Charts page). The weekly and monthly reversals are drawn as horizontal rays: the top active bullish, active bearish and elected ones per timeframe (1–5, default 3), Major ones first. Bullish green, bearish red, elected grey; monthly rays are thicker; Major solid, others dashed. Choose whether they show by default and which timeframes are drawn.
+
+**Market subscriptions** (Markets page). Sorted alphabetically, with the row for adding one at the top. The tickers the arrays extractor downloads. To add one, enter the symbol and the address of its Socrates Platform page (open the instrument on the site and copy the URL, e.g. `https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=…`). Arrays are saved to `<timing arrays folder>/<TICKER>`, and that folder is created when the ticker is added. **Add ticker** and **Remove** only mark the changes in the table (new rows are highlighted, removed rows are struck through and can be undone). **Save** writes them to the config and then downloads the daily, weekly and monthly arrays and reversals of all added tickers in one run, so the current week's and month's arrays aren't missing until the next weekly or monthly run. That run waits if another job is running, and its failures are retried like a scheduled run. **Discard changes** drops unsaved changes, and so does leaving the Settings page. Removing a ticker keeps its folder and arrays.
+
+**Automatic downloads** (Routines page, saved with **Save routines**). While the app is running, it starts the extractors in the background, one job at a time:
 
 | Job | When | Command |
 |-----|------|---------|
-| Timing arrays & reversals | Daily at the start time (a random minute between 05:00 and 05:59, picked on the first start) | Tue–Fri `-d`, Saturday `-dw`, Sunday and Monday nothing. The 1st of the month adds `-m` (alone on a Sunday or Monday). Always with `--reversals` |
-| Public blog | Every N hours from the start time (default 12) | `ae-blog.sh 1-2 --public` (no login) |
-| Private blog | Every N hours from the start time (default 12) | `ae-blog.sh 1 --private` (one login) |
+| Timing arrays & reversals | Daily at the first run time (a random minute between 05:00 and 05:59, picked on the first start) | Tue–Fri `-d`, Saturday `-dw`, Sunday and Monday nothing. The 1st of the month adds `-m` (alone on a Sunday or Monday). Always with `--reversals` |
+| Public blog | Every N hours from the first run time (default 12) | `ae-blog.sh 1-2 --public` (no login) |
+| Private blog | Every N hours from the first run time (default 12) | `ae-blog.sh 1 --private` (one login) |
 
 The reversals are saved in `reversals.sqlite` next to the arrays extractor's `config.json` (in Docker, the data folder). All jobs run with `--log-level debug`. If the arrays run fails, some arrays are outdated or some reversals fail, only those arrays and their reversals are downloaded again after **Retry after** hours (default 1), in one call with one login. **Attempts per day** (default 3) counts the first run too. A run is stopped after 60 minutes (arrays) or 20 minutes (blog).
 
-The start time is picked at random between 05:00 and 05:59 the first time the app starts, so installs in the same time zone don't all log in to the Socrates Platform at the same minute. It is saved in `settings.json` and stays the same after restarts.
+The first run time is picked at random between 05:00 and 05:59 the first time the app starts, so installs in the same time zone don't all log in to the Socrates Platform at the same minute. It is saved in `settings.json` and stays the same after restarts.
 
-The time zone, start time, intervals, retries, log retention and on/off switch for each job can all be changed.
+The time zone, first run time, intervals, retries, log retention and on/off switch for each job can all be changed.
 
 **Jobs table.** Shows the last and next run of each job. The **Run now** controls are only for running a job by hand with your own choice and don't change the automatic downloads:
 
@@ -181,7 +190,7 @@ Every run's output is saved as it arrives to `logs/<job>/<YYYY-MM-DD_HHMMSS>.log
 - **Level:** Debug (everything), Info, Warning or Error. Each shows that level and the more severe ones.
 - **Result of a run:** Success, Outdated (some arrays weren't updated on the site yet and are retried), Failed, Timed out or Interrupted.
 - **Filter:** job and date range.
-- A run in progress updates live. Click the date in the Jobs table on the Settings page to open that run.
+- A run in progress updates live. Click the date in the Jobs table on the Settings › Routines page to open that run.
 - Lines from the app itself start with `Socrates app:` (which command ran, the retry plan, the exit code). Lines without a `[date time] LEVEL` prefix, such as installer output from the wrapper scripts, are shown as Debug, and a Python traceback as Error.
 - Logs older than **Keep logs for** days (default 30) are deleted automatically. At most the last 5,000 lines are shown at once.
 
@@ -190,6 +199,7 @@ Every run's output is saved as it arrives to `logs/<job>/<YYYY-MM-DD_HHMMSS>.log
 - Click a ticker, then **Daily**, **Weekly** or **Monthly**. Changing the ticker or time frame keeps the date you were looking at, or the nearest one. **Latest** jumps to the newest array.
 - Click the date button to open a calendar. Only dates that have an array can be clicked, the others are greyed out.
 - **+ Add second array for comparison** adds a second column with its own filters. It starts as a copy of the first column. The columns sit side by side on wide screens and stack on narrow ones.
+- **+ Add chart** shows the daily candles of the first column's ticker in the second column instead (500 candles, about two years, are loaded; the last 100 are in view, scroll or zoom for the rest), and follows it when you change the ticker. The candles come from Twelve Data and are kept while the chart stays open; close and reopen it to load newer ones. A ticker costs one request the first time it is shown after the chart is opened, and none outside market hours once that day's candles are saved in `prices.sqlite`. The chart uses [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) (Apache-2.0), bundled in `static/vendor`.
 - The array frame keeps the 960×566 ratio. Images are never enlarged, and larger images are shrunk to fit. Click an image to open it at full size.
 - **↻ Refresh** rescans the folder for new arrays. The app also rescans by itself every 20 seconds while in use.
 
@@ -202,6 +212,8 @@ Every run's output is saved as it arrives to `logs/<job>/<YYYY-MM-DD_HHMMSS>.log
 | `D`, `W`, `M` | Daily, Weekly, Monthly |
 | `←` / `→` | Older / newer array in the current time frame |
 | `↑` / `↓` | Previous / next ticker in alphabetical order (wraps around). The time frame is kept and the array nearest to the current date opens |
+| `H` | With the chart shown: mark the array's date on the chart with a dashed blue line, or hide it. The line follows the array when you change the date or ticker |
+| `R` | With the chart shown: show or hide the reversals on the chart |
 
 ### Syncing Two Columns
 
@@ -230,12 +242,18 @@ If the other column has no array in that period, it stays where it is. Picking a
 
 | File | Description |
 |------|-------------|
-| `settings.json` | Saved folder locations (created on first save, not committed to git) |
+| `settings.json` | Saved folder locations and the Twelve Data API key (created on first save, readable by your user only, not committed to git) |
+| `prices.sqlite` | Daily candles cached for the chart; can be deleted, it is filled again (not committed to git) |
+| `../socrates-arrays-extractor/reversals.sqlite` | The reversals of every ticker, one table each, written by the arrays download (not committed to git) |
 | `.cache/blog-index.json` | Blog index cache, so only new or changed posts are read on later starts (not committed to git) |
 | `venv/` | Virtual environment created by `socrates.sh` (not committed to git) |
 | `logs/` | Output of every automatic and manual download (not committed to git) |
 | `.state/scheduler.json` | Last and next run of each job and pending retries, so a restart keeps the schedule (not committed to git) |
 | `../socrates-arrays-extractor/config.json`, `../ae-blog/config.json` | Socrates login and tickers, edited on the Settings page (not committed to git) |
+
+In Docker all of these are in the data folder (`/data`), with the extractor configs as `socrates-arrays-config.json` and `ae-blog-config.json` and the reversals as `reversals.sqlite`.
+
+**Backup:** the two archive folders, `settings.json`, both configs and `reversals.sqlite`. Past arrays and posts, the logins, the API key and the reversal history can't be downloaded again; the rest is rebuilt by the app.
 
 Delete `.cache/` to force a full rescan of the blog. Delete `settings.json` to start the setup again.
 

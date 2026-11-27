@@ -5,6 +5,9 @@ const STATUS_LABEL = {
   success: 'Success', outdated: 'Outdated', failed: 'Failed', timeout: 'Timed out', running: 'Running', interrupted: 'Interrupted',
 };
 
+/** The Settings sub-pages, in menu order: #/settings/<key> */
+const SETTINGS_PAGES = { archive: 'Archive', markets: 'Markets', routines: 'Routines', charts: 'Charts' };
+
 function statusBadge(status) {
   return h('span', { class: 'run-badge ' + status }, STATUS_LABEL[status] || status);
 }
@@ -13,7 +16,7 @@ const Settings = {
   el: $('#page-settings'),
   timer: null,
 
-  async show() {
+  async show(params, sub = 'archive') {
     try { App.settings = await api('/api/settings'); } catch { /* keep what we have */ }
     const s = App.settings;
     this.tickerEdits = null;  // unsaved ticker changes are dropped when the page is opened again
@@ -21,9 +24,28 @@ const Settings = {
     this.tickersEl = h('div', { class: 'card' }, h('div', { class: 'hint' }, 'Loading…'));
     this.scheduleEl = h('div', { class: 'card' }, h('div', { class: 'hint' }, 'Loading…'));
     this.jobsEl = h('div', { class: 'card' });
-    fill(this.el, h('div', { class: 'settings' },
-      h('h1', null, 'Settings'),
-      h('h3', { class: 'section' }, 'Folders'),
+    clearInterval(this.timer);
+    this.timer = null;
+    const page = {
+      archive: () => this.archivePage(s),
+      markets: () => [this.tickersEl],
+      routines: () => [this.scheduleEl, this.jobsEl],
+      charts: () => [this.chartKeyCard(), this.chartReversalsCard()],
+    }[sub] || (() => this.archivePage(s));
+    fill(this.el, h('div', { class: 'settings' }, h('h1', null, SETTINGS_PAGES[sub] || 'Archive'), page()));
+    if (sub === 'archive' || sub === 'markets') this.loadExtractors();
+    if (sub === 'routines') {
+      this.loadSchedule();
+      this.timer = setInterval(() => this.refreshJobs(), 5000);
+    }
+  },
+
+  /** Archive: the Socrates login the downloads use, then the archive folders. */
+  archivePage(s) {
+    const page = [
+      h('h3', { class: 'section' }, 'Downloads'),
+      this.accountEl,
+      h('h3', { class: 'section' }, 'Archive'),
       h('p', { class: 'hint section-note' },
         'In Docker, enter /archive/arrays and /archive/blog, the folders mounted by the compose file. ' +
         'Without Docker, enter a local folder (e.g. /Users/username/SOC) or a connected network share, ' +
@@ -36,18 +58,11 @@ const Settings = {
         'The root folder with one subfolder per year (<code>2009</code>, <code>2010</code>, …) holding the ' +
         '<code>.md</code> posts.',
         '/archive/blog', s.blogRoot),
-      h('h3', { class: 'section' }, 'Downloads'),
-      this.accountEl,
-      this.tickersEl,
-      this.scheduleEl,
-      this.jobsEl));
+    ];
     for (const kind of ['arrays', 'blog']) {
       if (s[kind + 'Root']) this.check(kind);
     }
-    this.loadExtractors();
-    this.loadSchedule();
-    clearInterval(this.timer);
-    this.timer = setInterval(() => this.refreshJobs(), 5000);
+    return page;
   },
 
   hide() {
@@ -105,6 +120,96 @@ const Settings = {
     } finally {
       button.disabled = false;
     }
+  },
+
+  /* ------------------------------------------------------------ charts */
+
+  chartKeyCard() {
+    const card = h('div', { class: 'card' });
+    const render = (message) => {
+      const set = App.settings.chartKeySet;
+      const key = h('input', {
+        type: 'password', autocomplete: 'off', spellcheck: 'false',
+        placeholder: set ? 'API key is set. Paste a new one to change it' : 'Twelve Data API key',
+      });
+      const status = h('div', { class: 'status' });
+      const send = async (body, done) => {
+        save.disabled = true;
+        this.setStatus(status, 'busy', 'Saving…');
+        try {
+          const r = await postJSON('/api/settings/chart-key', body);
+          App.settings.chartKeySet = r.chartKeySet;
+          render(done);
+        } catch (e) {
+          this.setStatus(status, 'err', '✕ ' + e.message);
+          save.disabled = false;
+        }
+      };
+      const save = h('button', { class: 'btn primary', onclick: () => send({ apiKey: key.value }, '✓ Saved. Open a chart on the Arrays page to try it.') }, 'Save');
+      key.addEventListener('keydown', (e) => { if (e.key === 'Enter') save.click(); });
+      const remove = set ? h('button', { class: 'btn', onclick: () => send({ remove: true }, 'Removed.') }, 'Remove key') : null;
+      if (message) this.setStatus(status, 'ok', message);
+      else if (!set) this.setStatus(status, 'err', 'Not set yet. The chart on the Arrays page needs it.');
+      fill(card,
+        h('h2', null, 'Twelve Data API key'),
+        h('p', { class: 'desc' }, 'The daily candles for the chart on the Arrays page come from ',
+          h('a', { href: 'https://twelvedata.com/pricing', target: '_blank', rel: 'noopener' }, 'Twelve Data'),
+          '. A free account allows 8 requests a minute and 800 a day. Each ticker costs one request the first time it is shown ' +
+          'after the chart is opened.'),
+        h('div', { class: 'form-grid' }, h('label', null, 'API key'), key),
+        h('div', { class: 'card-actions' }, save, remove),
+        status);
+    };
+    render();
+    return card;
+  },
+
+  /** Which reversals the chart on the Arrays page draws. Each box is saved when it is clicked. */
+  chartReversalsCard() {
+    const st = { shown: true, weekly: true, monthly: true, weeklyCount: 3, monthlyCount: 3, ...(App.settings.chartReversals || {}) };
+    const status = h('div', { class: 'status' });
+    const send = async (key, value, undo) => {
+      this.setStatus(status, 'busy', 'Saving…');
+      try {
+        const r = await postJSON('/api/settings/chart-reversals', { [key]: value });
+        App.settings.chartReversals = r.chartReversals;
+        Arrays.revShown = null; // the Arrays page starts again from the new default
+        this.setStatus(status, 'ok', '✓ Saved.');
+        return r.chartReversals;
+      } catch (e) {
+        undo();
+        this.setStatus(status, 'err', '✕ ' + e.message);
+        return null;
+      }
+    };
+    const box = (key) => {
+      const input = h('input', { type: 'checkbox' });
+      input.checked = st[key];
+      input.addEventListener('change', () => send(key, input.checked, () => { input.checked = !input.checked; }));
+      return input;
+    };
+    const count = (key) => {
+      const input = h('input', { type: 'number', min: 1, max: 5, step: 1, class: 'num', title: '1 to 5' });
+      input.value = st[key];
+      let last = st[key];
+      input.addEventListener('change', async () => {
+        const n = Math.min(5, Math.max(1, Math.round(Number(input.value) || last)));
+        input.value = n;
+        const saved = await send(key, n, () => { input.value = last; });
+        if (saved) last = saved[key];
+      });
+      return h('span', { class: 'inline' }, 'show top', input);
+    };
+    const row = (label, input, extra) => [h('label', null, label),
+      h('div', { class: 'inline' }, input, typeof extra === 'string' ? h('span', { class: 'hint' }, extra) : extra || null)];
+    return h('div', { class: 'card' },
+      h('h2', null, 'Reversals on the chart'),
+      h('p', { class: 'desc' }, 'Display reversals on the chart, Major ones first.'),
+      h('div', { class: 'form-grid' },
+        row('Show by default', box('shown'), 'Press R on the Arrays page to show or hide them'),
+        row('Weekly reversals', box('weekly'), count('weeklyCount')),
+        row('Monthly reversals', box('monthly'), count('monthlyCount'))),
+      status);
   },
 
   /* ------------------------------------------------------------ account and tickers */
@@ -223,21 +328,26 @@ const Settings = {
 
     const link = (u) => h('a', { href: u, target: '_blank', rel: 'noopener noreferrer', title: u },
       u.replace(/^https:\/\/standard\.socratesplatform\.com/, ''));
-    const rows = [
-      ...x.tickers.map((t) => {
-        const removed = edits.remove.has(t.symbol);
-        return h('tr', { class: removed ? 'pending-remove' : '' },
-          h('td', { class: 'sym' }, t.symbol),
+    const all = [...x.tickers.map((t) => ({ ...t, pending: false })), ...edits.add.map((t) => ({ ...t, pending: true }))]
+      .sort((a, b) => a.symbol.localeCompare(b.symbol));
+    const uncovered = new Set(x.chartUncovered || []);
+    const noChart = (t) => (t.pending ? uncovered.has(t.symbol) : t.chartCovered === false)
+      ? h('span', { class: 'no-chart', title: 'Market data is not available for the charts' }, '⚠') : null;
+    const rows = all.map((t) => {
+      if (t.pending) {
+        return h('tr', { class: 'pending-add' },
+          h('td', { class: 'sym' }, t.symbol, noChart(t), h('span', { class: 'tag-new' }, 'new')),
           h('td', { class: 'url' }, link(t.url)),
-          h('td', { class: 'path' }, t.folder, t.folder && !t.folderExists ? h('span', { class: 'warn' }, ' (missing)') : null),
-          h('td', null, h('button', { class: 'btn small', onclick: () => toggleRemove(t.symbol) }, removed ? 'Undo' : 'Remove')));
-      }),
-      ...edits.add.map((t) => h('tr', { class: 'pending-add' },
-        h('td', { class: 'sym' }, t.symbol, h('span', { class: 'tag-new' }, 'new')),
+          h('td', { class: 'path' }, root ? `${root}/${t.symbol}` : ''),
+          h('td', null, h('button', { class: 'btn small', onclick: () => dropAdded(t.symbol) }, 'Remove')));
+      }
+      const removed = edits.remove.has(t.symbol);
+      return h('tr', { class: removed ? 'pending-remove' : '' },
+        h('td', { class: 'sym' }, t.symbol, noChart(t)),
         h('td', { class: 'url' }, link(t.url)),
-        h('td', { class: 'path' }, root ? `${root}/${t.symbol}` : ''),
-        h('td', null, h('button', { class: 'btn small', onclick: () => dropAdded(t.symbol) }, 'Remove')))),
-    ];
+        h('td', { class: 'path' }, t.folder, t.folder && !t.folderExists ? h('span', { class: 'warn' }, ' (missing)') : null),
+        h('td', null, h('button', { class: 'btn small', onclick: () => toggleRemove(t.symbol) }, removed ? 'Undo' : 'Remove')));
+    });
     this.tickerStatus = status;
     if (message) this.setStatus(status, message[0], message[1]);
     else if (changes) {
@@ -245,19 +355,18 @@ const Settings = {
         (edits.add.length ? 'and download the arrays and reversals of the new tickers.' : 'them.'));
     }
     fill(this.tickersEl,
-      h('h2', null, `Timing array tickers (${x.tickers.length})`),
+      h('h2', null, `Market subscriptions (${x.tickers.length})`),
+      h('p', { class: 'desc' }, 'The arrays and reversals of the markets you subscribe to are downloaded automatically.'),
       h('p', { class: 'desc' },
-        'The tickers the arrays extractor downloads. Each one needs the Socrates Platform page of the instrument: open it on the ' +
-        'dashboard site and copy the address. Arrays are saved to ', h('code', null, (root || '<arrays folder>') + '/<TICKER>'), '.'),
-      h('p', { class: 'desc' },
-        'Removing a ticker only removes it from this list, so no new arrays are downloaded for it. ' +
-        'Its folder and the arrays already downloaded are kept, and stay visible on the Arrays page.'),
-      root ? null : h('div', { class: 'status err' }, 'Set the timing arrays folder above first.'),
+        'Removing a ticker stops its arrays and reversals from being downloaded. ' +
+        'Its folder, arrays and saved reversals are kept, and the arrays stay visible on the Arrays page.'),
+      root ? null : h('div', { class: 'status err' }, 'Set the timing arrays folder on the ',
+        h('a', { href: '#/settings/archive' }, 'Archive'), ' page first.'),
       h('div', { class: 'table-wrap' }, h('table', { class: 'tickers' },
-        h('thead', null, h('tr', null, h('th', null, 'Ticker'), h('th', null, 'Socrates page'), h('th', null, 'Saved to'), h('th'))),
-        h('tbody', null, rows.length ? rows : h('tr', null, h('td', { colspan: 4, class: 'hint' }, 'No tickers yet.'))),
-        h('tfoot', null, h('tr', null,
-          h('td', null, symbol), h('td', { colspan: 2 }, url), h('td', null, addBtn))))),
+        h('thead', null,
+          h('tr', null, h('th', null, 'Ticker'), h('th', null, 'Socrates page'), h('th', null, 'Saved to'), h('th')),
+          h('tr', { class: 'add-row' }, h('td', null, symbol), h('td', { colspan: 2 }, url), h('td', null, addBtn))),
+        h('tbody', null, rows.length ? rows : h('tr', null, h('td', { colspan: 4, class: 'hint' }, 'No tickers yet.'))))),
       h('div', { class: 'card-actions' },
         changes ? h('button', { class: 'btn', onclick: discard }, 'Discard changes') : null, saveBtn),
       status);
@@ -305,20 +414,20 @@ const Settings = {
         button.disabled = false;
       }
     };
-    const button = h('button', { class: 'btn primary', onclick: save }, 'Save schedule');
+    const button = h('button', { class: 'btn primary', onclick: save }, 'Save routines');
     const row = (label, ...content) => [h('label', null, label), h('div', { class: 'inline' }, ...content)];
     fill(this.scheduleEl, 
       h('h2', null, 'Automatic downloads'),
-      h('p', { class: 'desc' }, 'Runs the arrays extractor and the blog downloader in the background.'),
+      h('p', { class: 'desc' }, 'Runs the arrays & reversals extractor and the blog downloader in the background.'),
       h('datalist', { id: 'tz-list' }, this.timezones.map((z) => h('option', { value: z }))),
       h('div', { class: 'form-grid' },
         row('Time zone', f.timezone),
-        row('Start time', f.startTime, h('span', { class: 'hint' }, 'Daily arrays run, and the first blog check of the day')),
+        row('First run', f.startTime),
         h('div', { class: 'form-sub' }, 'Timing arrays & reversals'),
         row('Enabled', check('arraysEnabled')),
         row('Retry after', num('arraysRetryHours', { min: 0.25, max: 24, step: 0.25 }), 'hours',
-          h('span', { class: 'hint' }, 'Only the arrays and reversals that failed are downloaded again')),
-        row('Attempts per day', num('arraysMaxAttempts', { min: 1, max: 10, step: 1 }), h('span', { class: 'hint' }, 'The first run included')),
+          h('span', { class: 'hint' }, 'Failed only')),
+        row('Attempts per day', num('arraysMaxAttempts', { min: 1, max: 10, step: 1 })),
         h('div', { class: 'form-sub' }, 'Public blog (pages 1–2, no login)'),
         row('Enabled', check('publicEnabled')),
         row('Check every', num('publicEveryHours', { min: 1, max: 168, step: 1 }), 'hours'),
@@ -361,7 +470,7 @@ const Settings = {
     });
     fill(this.jobsEl, 
       h('h2', null, 'Jobs'),
-      h('p', { class: 'desc' }, 'Run now is for manual runs only and doesn\'t affect the schedule.'),
+      h('p', { class: 'desc' }, 'Run now is for manual runs only and doesn\'t affect the routines.'),
       h('p', { class: 'desc' }, `Times are in ${st.timezone} (now ${st.now}). `, h('a', { href: '#/logs' }, 'Open the logs')),
       h('div', { class: 'table-wrap' }, h('table', { class: 'jobs' },
         h('thead', null, h('tr', null, h('th', null, 'Job'), h('th', null, 'Last run'), h('th', null, 'Next run'), h('th'))),

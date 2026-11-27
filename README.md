@@ -3,10 +3,10 @@
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![Docker image](https://img.shields.io/badge/docker-ghcr.io%2Ffatoyo%2Fsocrates-2496ED?logo=docker&logoColor=white)](https://github.com/FatoYo/socrates/pkgs/container/socrates)
 
-A self-hosted web app for browsing Socrates timing arrays and the Armstrong Economics blog. It keeps your own archive up to date with scheduled downloads and lets you search, filter and compare it in the browser.
+A self-hosted web app for your Socrates subscription. It keeps a local archive of the timing arrays, the reversals and the Armstrong Economics blog up to date with scheduled downloads, and lets you browse, compare and chart them in the browser.
 
 > **Note**
-> Socrates is an independent project and is not affiliated with Armstrong Economics or the Socrates Platform. It only downloads and displays content that your own subscription gives you access to: the timing arrays from the [Socrates Platform](https://standard.socratesplatform.com/) and the public and private posts of the [Armstrong Economics blog](https://www.armstrongeconomics.com/blog/). You need a Socrates Platform subscription, and you are responsible for following those sites' terms of use.
+> Socrates is an independent project and is not affiliated with Armstrong Economics or the Socrates Platform. It only downloads what your own subscription gives you access to: the timing arrays and reversals from the [Socrates Platform](https://standard.socratesplatform.com/) and the posts of the [Armstrong Economics blog](https://www.armstrongeconomics.com/blog/). You are responsible for following those sites' terms of use.
 
 ## Features
 
@@ -14,38 +14,43 @@ A self-hosted web app for browsing Socrates timing arrays and the Armstrong Econ
 
 ![Timing arrays page](docs/screenshot-arrays.png)
 
-- Browse the Daily, Weekly and Monthly arrays of every ticker you follow.
-- Jump to any date with a calendar that only offers dates with an array.
-- Compare two arrays side by side. The second column follows the first one's date.
-- Navigate with the keyboard: arrows for dates and tickers, `D` / `W` / `M` for the time frame, `Option` + `S` to find a ticker.
+- Daily, Weekly and Monthly arrays of every market you subscribe to.
+- A calendar that only offers dates with an array.
+- Two arrays side by side, the second following the first one's date.
+- Keyboard navigation: arrows for dates and tickers, `D` / `W` / `M` for the time frame, `Option` + `S` to find a ticker.
+
+### Reversals and price chart
+
+![Price chart with reversals](docs/screenshot-charts.png)
+
+- Daily candles of the array's ticker next to it, from [Twelve Data](https://twelvedata.com/) (a free API key is enough).
+- The weekly and monthly reversals drawn as horizontal rays, major ones prioritized.
+- `H` marks the array's date on the chart, `R` shows or hides the reversals, and the chart can be maximized.
 
 ### Blog archive
 
 ![Blog page](docs/screenshot-blog.png)
 
-- Keep a local backup of the blog: every public and private post is saved as a markdown file in your own folder, so you still have it if a post changes or disappears from the site.
-- Read the whole archive, public and private posts, rendered from markdown.
-- Filter by year, month, day, public or private, and category.
-- Move to the newer or older post with the arrow keys. The filter header folds away for reading.
+- Every public and private post saved as markdown in your own folder, so you keep it if it changes on the site.
+- Read and filter the archive by date, public or private, and category.
 
 ### Automatic downloads
 
-- Downloads new arrays every morning: daily arrays Tuesday to Saturday, weekly arrays on Saturday and monthly arrays on the 1st. The reversals of the same time frames are saved in a SQLite database. Failed arrays and reversals are retried.
-- Checks the public and private blog for new posts every 12 hours.
-- Settings page for the Socrates login, the list of tickers and the schedule. Newly added tickers get their daily, weekly and monthly arrays straight away.
-- **Download now** buttons on the Arrays and Blog pages, and a Logs page with the output of every run, filtered by level, job and date.
+- Arrays and reversals every morning: daily Tuesday to Saturday, weekly on Saturday, monthly on the 1st. Failed ones are retried.
+- New blog posts every 12 hours.
+- **Download now** on the Arrays and Blog pages, and a Logs page with the output of every run.
 
 ## How it works
 
-The repository holds three parts. The web app runs the two downloaders on its schedule; both can also be used on their own from the command line.
+The web app runs two downloaders on its schedule. Both also work on their own from the command line.
 
 | Folder | What it does |
 |--------|--------------|
-| [`socrates-app/`](socrates-app/README.md) | The web app: browsing, settings, schedule and logs |
-| [`socrates-arrays-extractor/`](socrates-arrays-extractor/README.md) | Logs in to the Socrates Platform and saves the timing arrays as images, one folder per ticker, and the reversals in a SQLite database |
-| [`ae-blog/`](ae-blog/README.md) | Saves the public and private blog posts as markdown files with Obsidian-compatible front matter, one folder per year |
+| [`socrates-app/`](socrates-app/README.md) | The web app: browsing, chart, settings, schedule and logs |
+| [`socrates-arrays-extractor/`](socrates-arrays-extractor/README.md) | Saves the timing arrays as images, one folder per ticker, and the reversals in a SQLite database |
+| [`ae-blog/`](ae-blog/README.md) | Saves the blog posts as markdown files with Obsidian-compatible front matter, one folder per year |
 
-The arrays and posts are plain files in two folders you choose, so you can also use them outside the app.
+Arrays and posts are plain files in folders you choose, so you can use them outside the app too.
 
 ## Installation
 
@@ -62,7 +67,7 @@ mkdir -p data arrays blog
 docker compose up -d
 ```
 
-Open `http://<server>:3141`. On the Settings page, set the folders to `/archive/arrays` and `/archive/blog`, enter your Socrates login and add your tickers. The settings, arrays and blog posts are kept in the `data`, `arrays` and `blog` folders. The comments in the file explain how to change them.
+Open `http://<server>:3141`. Under **Settings › Archive**, enter your Socrates login and set the folders to `/archive/arrays` and `/archive/blog`, then add your markets under **Settings › Markets**. Data, arrays and posts go to the `data`, `arrays` and `blog` folders; the comments in the file explain how to change them.
 
 #### Server setup
 
@@ -82,17 +87,17 @@ Open `http://<server>:3141`. On the Settings page, set the folders to `/archive/
    ```bash
    docker compose up -d
    ```
-4. Open `http://<HOST_IP>:3141`. On the Settings page, set the folders to `/archive/arrays` and `/archive/blog`, enter your Socrates login and add your tickers.
+4. Open `http://<HOST_IP>:3141`, then set up **Settings › Archive** and **Settings › Markets** as in the quick start.
 
-To update, run `docker compose pull && docker compose up -d`. To stay on a version, set `SOCRATES_VERSION` in `.env`, for example `1.0`.
+To update, run `docker compose pull && docker compose up -d`. To stay on a version, set `SOCRATES_VERSION` in `.env`, for example `1.2`.
 
-**Verifying the image.** Every release image is built by this repository's GitHub workflow and signed with a build attestation, so you can check that it really came from here before you run it:
+**Verifying the image.** Every release image is built by this repository's GitHub workflow and signed, so you can check where it came from:
 ```bash
-gh attestation verify oci://ghcr.io/fatoyo/socrates:1.0 --owner FatoYo
+gh attestation verify oci://ghcr.io/fatoyo/socrates:1.2 --owner FatoYo
 ```
 Each version is also listed under [Releases](https://github.com/FatoYo/socrates/releases).
 
-**Data and security.** Settings, the Socrates login, logs and the schedule are kept in the data folder (`DATA_LOCATION`, `./data` in the quick start). Back it up, and keep it private because it holds your Socrates password. The container runs as a regular user with all extra privileges removed and a read-only filesystem, and it only sees its data folder and the two archive folders. The server setup also gives it its own network. The app has no login of its own, so publish it only on your home network or a VPN such as Tailscale. To reach it from the internet, put it behind a service that adds a login, for example a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) with Cloudflare Access, [Pangolin](https://github.com/fosrl/pangolin), or a reverse proxy with an identity provider such as [Pocket ID](https://github.com/pocket-id/pocket-id) or [Authelia](https://www.authelia.com/). Never publish it on the internet without one.
+**Data and security.** Settings, logins, reversals, logs and the schedule are kept in the data folder (`DATA_LOCATION`, `./data` in the quick start). Back it up and keep it private: it holds your Socrates password and Twelve Data key. The container runs as a regular user without extra privileges, on a read-only filesystem, and only sees its data folder and the two archive folders. The app has no login of its own, so publish it only on your home network or a VPN such as Tailscale. To reach it from the internet, put it behind a service that adds a login, for example a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) with Cloudflare Access, [Pangolin](https://github.com/fosrl/pangolin), or a reverse proxy with an identity provider such as [Pocket ID](https://github.com/pocket-id/pocket-id) or [Authelia](https://www.authelia.com/). Never publish it on the internet without one.
 
 ### Locally on a Mac or Windows PC
 
@@ -110,9 +115,9 @@ cd socrates/socrates-app
 ./socrates.sh
 ```
 
-Open <http://localhost:8050>. The first start creates a Python environment and installs the dependencies. On the Settings page, enter the folders for your arrays and blog posts, your Socrates login and your tickers. Automatic downloads run while the app is running.
+Open <http://localhost:8050>. The first start installs the dependencies. Set up **Settings › Archive** and **Settings › Markets**; downloads run while the app is running.
 
-The [app's README](socrates-app/README.md) lists all options, pages and keyboard shortcuts. To use the downloaders on their own, see [socrates-arrays-extractor](socrates-arrays-extractor/README.md) and [ae-blog](ae-blog/README.md).
+The [app's README](socrates-app/README.md) lists all options, pages and keyboard shortcuts.
 
 ## License
 

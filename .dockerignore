@@ -16,3 +16,5 @@
 socrates-app/logs
 socrates-app/.state
 **/build-info.json
+**/prices.sqlite
+**/reversals.sqlite

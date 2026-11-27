@@ -2,6 +2,8 @@
 config.json
 # Reversals saved by the arrays extractor with --reversals
 reversals.sqlite
+# Daily candles cached by the app for the chart
+prices.sqlite
 
 # ---> Python
 # Byte-compiled / optimized / DLL files

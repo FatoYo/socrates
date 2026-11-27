@@ -335,7 +335,7 @@ def validate_schedule(data):
     out["timezone"] = tz
     start = str(data.get("startTime", "")).strip()
     if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", start):
-        raise ValueError("The start time must be HH:MM, e.g. 05:00.")
+        raise ValueError("The first run must be HH:MM, e.g. 05:00.")
     out["startTime"] = start
 
     def number(key, label, low, high, integer=True):

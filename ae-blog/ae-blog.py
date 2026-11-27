@@ -885,7 +885,7 @@ Exit status: 0 when everything succeeded, 1 when any error was logged.
                 log.debug(f"[{idx}/{total}] Saved: {filepath}")
                 success_count += 1
         
-        log.info(f"Conversion complete: {success_count} successful, {error_count} errors")
+        log.info(f"Download complete: {success_count} successful, {error_count} errors")
     
     if error_counter.count:
         log.info(f"Finished with {error_counter.count} error(s)")

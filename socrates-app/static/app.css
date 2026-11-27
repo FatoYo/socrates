@@ -77,6 +77,12 @@ kbd {
 .nav a svg { flex: 0 0 auto; }
 .nav a:hover { background: rgba(255, 255, 255, .06); }
 .nav a.active { background: var(--sidebar-active); color: #fff; box-shadow: inset 3px 0 0 var(--accent); }
+.nav a.open { color: #fff; }
+.nav a.sub { display: none; padding-top: 6px; padding-bottom: 6px; padding-left: 42px; font-size: 13px; }
+.nav.settings-open a.sub { display: flex; }
+.nav .chev { margin-left: auto; opacity: .6; transition: transform .15s ease; }
+.nav.settings-open .chev { transform: rotate(90deg); }
+.app.collapsed .nav a.sub, .app.collapsed .nav .chev { display: none; }
 .sidebar .version {
   margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 12px 20px 16px;
   color: var(--sidebar-text); opacity: .6; font-size: 12px; text-decoration: none; white-space: nowrap;
@@ -103,6 +109,8 @@ kbd {
   .sidebar { position: fixed; left: 0; top: 0; transform: translateX(-100%); transition: transform .2s ease; box-shadow: var(--shadow); }
   .app.collapsed .sidebar { width: var(--sidebar-w); flex-basis: var(--sidebar-w); }
   .app.collapsed .sidebar .brand, .app.collapsed .nav a span { display: inline; }
+  .app.collapsed .nav.settings-open a.sub { display: flex; }
+  .app.collapsed .nav .chev { display: inline; }
   .app.mobile-open .sidebar { transform: none; }
   .app.mobile-open .backdrop { display: block; position: fixed; inset: 0; background: rgba(0, 0, 0, .35); z-index: 20; }
   .mobile-bar {
@@ -186,6 +194,33 @@ kbd {
 .frame img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; display: block; cursor: zoom-in; }
 .frame .frame-msg { position: absolute; color: var(--muted); padding: 10px; text-align: center; }
 .frame.loading img { opacity: .55; }
+/* The chart column is as tall as the array column, with the chart at the bottom so both frames end level */
+.columns.with-chart { align-items: stretch; }
+.columns.with-chart > .chart-col { display: flex; flex-direction: column; }
+.columns.with-chart > .chart-col .chart-frame { margin: 0 auto; }
+.chart-frame .chart-box { position: absolute; inset: 0; }
+.chart-frame.loading .chart-box { opacity: .55; }
+.chart-frame .frame-msg { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.chart-title { font-size: 14px; color: var(--muted); }
+.chart-col .caption { justify-content: flex-end; }
+.columns.chart-max > .col:not(.chart-col) { display: none; }
+.columns.chart-max > .chart-col .chart-frame { max-width: none; aspect-ratio: auto; }
+.chart-col .col-label .spacer { flex: 1; }
+.icon-toggle { border: 0; background: none; padding: 2px; line-height: 0; color: var(--muted); cursor: pointer; border-radius: 4px; }
+.icon-toggle:hover { color: var(--text); }
+.icon-toggle:focus-visible { outline: 2px solid var(--accent); }
+.chart-ohlc { position: absolute; top: 6px; left: 8px; z-index: 3; display: flex; gap: 4px 6px; flex-wrap: wrap;
+  font: 12px ui-monospace, Menlo, monospace; pointer-events: none; }
+.chart-ohlc .k { color: var(--muted); }
+.chart-ohlc .up { color: #26a69a; }
+.chart-ohlc .down { color: #ef5350; margin-right: 0; }
+.chart-ohlc .k + span { margin-right: 6px; }
+.chart-legend { min-height: 18px; margin-top: auto; margin-bottom: 8px; }
+.ray-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 11px; color: var(--muted); }
+.ray-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.ray-item > span:last-child { margin-left: 2px; }
+.ray-sample { display: inline-block; width: 16px; height: 0; }
+.chart-title strong { color: var(--text); font-weight: 600; }
 .caption { display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 12px; }
 .caption code { font: 12px ui-monospace, Menlo, monospace; color: var(--text); }
 
@@ -340,12 +375,13 @@ kbd {
 .tickers th, .jobs th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
 .tickers td, .jobs td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
 .tickers td.sym { font-weight: 600; white-space: nowrap; }
+.tickers .no-chart { color: #eab308; margin-left: 6px; cursor: help; font-weight: 400; }
 .tickers td.url { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tickers td.url a { color: var(--accent); text-decoration: none; }
 .tickers td.path { font: 12px ui-monospace, Menlo, monospace; color: var(--muted); word-break: break-all; }
-.tickers tfoot td { border-bottom: 0; padding-top: 10px; vertical-align: middle; }
-.tickers tfoot input { width: 100%; }
-.tickers .symbol-input { text-transform: uppercase; width: 90px; }
+.tickers .add-row td { padding-top: 10px; padding-bottom: 10px; vertical-align: middle; background: var(--panel-2); }
+.tickers .add-row input { width: 100%; }
+.tickers .add-row .symbol-input { text-transform: uppercase; width: 90px; }
 .tickers tr.pending-remove td.sym, .tickers tr.pending-remove td.url, .tickers tr.pending-remove td.path { text-decoration: line-through; opacity: .55; }
 .tickers tr.pending-add { background: var(--accent-soft); }
 .tickers .tag-new { margin-left: 6px; font-size: 10.5px; font-weight: 700; color: var(--accent); text-transform: uppercase; }
@@ -362,11 +398,16 @@ kbd {
 }
 .frame-check .pages-input:focus { border-color: var(--accent); }
 .dl { display: inline-flex; align-items: center; gap: 8px; }
-.dl .dl-note { font-size: 12.5px; }
-.dl .dl-note.ok { color: var(--ok); }
-.dl .dl-note.err { color: var(--danger); }
-.dl .dl-note.warn { color: var(--private); }
-.dl .dl-note a { color: inherit; }
+/* The run note: a full-width row of its own under the toolbar, right-aligned under the button */
+.dl-row { flex-basis: 100%; text-align: right; min-height: 18px; margin-top: -2px; }
+.dl-note { font-size: 12.5px; }
+.dl-note.ok { color: var(--ok); }
+.dl-note.err { color: var(--danger); }
+.dl-note.warn { color: var(--private); }
+.dl-note a { color: inherit; }
+.dl-close { border: 0; background: none; color: inherit; opacity: .6; cursor: pointer; font-size: 15px; line-height: 1;
+  padding: 0 2px; margin-left: 6px; vertical-align: -1px; }
+.dl-close:hover { opacity: 1; }
 .run-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 0 7px; border-radius: 999px; line-height: 18px; margin-right: 6px; }
 .run-badge.success { background: rgba(21, 128, 61, .14); color: var(--ok); }
 .run-badge.failed, .run-badge.timeout { background: rgba(185, 28, 28, .12); color: var(--danger); }
