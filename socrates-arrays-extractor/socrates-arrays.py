@@ -8,6 +8,7 @@ import argparse
 import json
 import logging
 import os
+import sqlite3
 import sys
 import time
 from datetime import date, datetime, timedelta
@@ -29,6 +30,7 @@ from selenium.webdriver.chrome.service import Service
 from PIL import Image
 
 PAGE_LOAD_TIMEOUT = 60  # seconds; stops a page that never finishes loading from hanging the run
+REVERSALS_DB = "reversals.sqlite"  # next to config.json
 OUTDATED_EXIT = 2       # exit status: no errors, but some arrays were still the previous period's
 
 log = logging.getLogger('socrates-arrays')
@@ -164,6 +166,14 @@ def login(driver, config):
         raise ExtractionError(f"Login failed: {describe_error(e)}") from None
     log.debug("Login successful")
 
+def open_ticker_page(driver, ticker_config):
+    """Open a ticker's dashboard and wait until it has loaded"""
+    driver.get(ticker_config['url'])
+    WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Daily Price Chart')]"))
+    )
+    time.sleep(1)
+
 def get_timing_array(driver, ticker, ticker_config, timelevel, array_type, today):
     """Extract timing array for a specific ticker and timelevel. Returns True when the array is
     current and saved, False when the site still shows an outdated one. Raises on failure."""
@@ -173,14 +183,7 @@ def get_timing_array(driver, ticker, ticker_config, timelevel, array_type, today
     if not archive_dir.is_dir():
         raise ExtractionError(f"archive folder does not exist: {archive_dir}")
     
-    # Navigate to ticker dashboard
-    driver.get(ticker_config['url'])
-    
-    # Wait for page load
-    WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Daily Price Chart')]"))
-    )
-    time.sleep(1)
+    open_ticker_page(driver, ticker_config)
     
     # Map array_type to full timing name
     timing_name = {
@@ -351,6 +354,172 @@ def crop_image(image_path, driver):
     
     cropped.save(image_path)
 
+# Reversals: the table the site shows with the R key, read from the ticker page that is already
+# open. Returns its title and one entry per price, with the text lines and indicator tags.
+REVERSALS_SCRIPT = """
+const v = name => document.querySelector(`input[name="${name}"]`)?.value;
+const marketId = v('ResearchItemId'), analysisId = v('DashboardData.DailyAnalysisId');
+const token = v('__RequestVerificationToken');
+if (!marketId || !analysisId || !token) return { success: false, error: 'Tokens not found' };
+const response = await fetch('/Chart/GetReversalTableFullscreen', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', 'x-requested-with': 'XMLHttpRequest' },
+    body: new URLSearchParams({ marketId, timelevel: arguments[0], dailyAnalysisId: analysisId,
+                                __RequestVerificationToken: token })
+});
+if (!response.ok) return { success: false, status: response.status };
+const doc = new DOMParser().parseFromString((await response.json()).html, 'text/html');
+const texts = cell => [...cell.childNodes].filter(n => n.nodeType === Node.TEXT_NODE)
+    .map(n => n.textContent.trim()).filter(Boolean);
+const tags = cell => [...cell.querySelectorAll('[data-type]')].map(s => ({
+    type: s.dataset.type, value: s.dataset.value || '', kind: s.dataset.reversaltype || '', text: s.textContent.trim() }));
+const blocks = {};
+doc.querySelectorAll('.block').forEach(b => { blocks[b.querySelector('.title-bl')?.textContent.trim() || ''] = b; });
+const titles = Object.keys(blocks);
+const active = titles.find(t => t.endsWith('Active Reversals'));
+const elected = titles.find(t => t.endsWith('Elected Reversals'));
+if (!active || !elected) return { success: false, error: `unexpected table: ${titles.join(', ') || 'empty'}` };
+const rows = [];
+blocks[active].querySelectorAll('.tr').forEach(tr => {
+    const [side, ...cells] = tr.children;
+    cells.forEach(c => rows.push({ status: 'active', side: side.textContent.trim(), text: texts(c), tags: tags(c) }));
+});
+blocks[elected].querySelectorAll('.tr > .td').forEach(c => rows.push({ status: 'elected', text: texts(c), tags: tags(c) }));
+return { success: true, title: active, rows };
+"""
+
+def reversal_period(text):
+    """Start of the period a reversal was elected in: "Nov 19 2026" (daily),
+    "Week of Nov 16 2026" (weekly) or "Month of May 2026" (monthly)."""
+    parts = text.removeprefix('Week of ').removeprefix('Month of ').split()
+    if len(parts) == 3:
+        return date(int(parts[2]), MONTHS[parts[0]], int(parts[1]))
+    if len(parts) == 2:
+        return date(int(parts[1]), MONTHS[parts[0]], 1)
+    raise ValueError(text)
+
+KNOWN_TAGS = {'ReversalPosition', 'Importance', 'MajorMinor', 'Extended'}
+unknown_tags = set()  # tags already reported, so each one is logged once per run
+
+def parse_reversal(row):
+    """One reversal from the table: direction, price, indicators and, once elected, its period"""
+    text, tag_list = row['text'], row['tags']
+    tags = {t['type']: t['value'] for t in tag_list}
+    # "Dbl" (double reversal) has not been seen on the site yet, so it is recognised by its label
+    # or a "Double" value on any tag
+    double = any(t['text'] == 'Dbl' or 'Double' in (t['value'], t['kind']) for t in tag_list)
+    for t in tag_list:
+        if t['type'] not in KNOWN_TAGS and t['text'] != 'Dbl' and t['type'] not in unknown_tags:
+            unknown_tags.add(t['type'])
+            log.warning(f"Unknown reversal tag {t['type']}={t['value']} ('{t['text']}'), not saved")
+    side = row['side'] if row['status'] == 'active' else (text[1] if len(text) > 1 else '')
+    direction = side.split()[0].lower() if side else ''
+    if direction not in ('bullish', 'bearish') or not text:
+        raise ValueError(f"unexpected reversal {' / '.join(text) or 'without text'}")
+    elected = None
+    if row['status'] == 'elected':
+        if len(text) < 3:
+            raise ValueError(f"elected reversal without a period: {' / '.join(text)}")
+        elected = reversal_period(text[2]).isoformat()
+    return {
+        'status': row['status'],
+        'direction': direction,
+        'price': float(text[0].replace(',', '')),
+        'position': int(tags['ReversalPosition']) if 'ReversalPosition' in tags else None,
+        'major': int(tags.get('MajorMinor') == 'Major'),
+        'double': int(double),
+        'extended': int('Extended' in tags),
+        'order_number': int(tags['Importance']) if 'Importance' in tags else None,  # the site's tag name
+        'elected_period': elected,
+    }
+
+def open_reversals_db(path):
+    """The reversals database, created when missing"""
+    try:
+        return sqlite3.connect(path)
+    except sqlite3.Error as e:
+        raise ExtractionError(f"could not open the reversals database {path}: {e}") from None
+
+def save_reversals(db, ticker, timeframe, reversals, today):
+    """Merge one table read into the ticker's table. A reversal is the same one when its time frame,
+    direction, price and position match: a known active one is updated, or marked elected when it
+    shows up on the elected side, and anything not yet stored is added. Returns (added, elected)."""
+    table = '"' + ticker.replace('"', '""') + '"'
+    day = today.isoformat()
+    added = newly_elected = 0
+    with db:
+        db.execute(f"""CREATE TABLE IF NOT EXISTS {table} (
+            id INTEGER PRIMARY KEY,
+            timeframe TEXT NOT NULL,       -- D, W or M
+            direction TEXT NOT NULL,       -- bullish or bearish
+            price REAL NOT NULL,
+            position INTEGER,              -- 1-4, the site's ReversalPosition number (not a rank)
+            major INTEGER NOT NULL,        -- 1 for "Maj"
+            double INTEGER NOT NULL,       -- 1 for "Dbl"
+            extended INTEGER NOT NULL,     -- 1 for "Ext"
+            order_number INTEGER,          -- the order number, when shown (the site's Importance tag)
+            status TEXT NOT NULL,          -- active or elected
+            elected_period TEXT,           -- first day of the day, week or month it was elected in
+            first_seen TEXT NOT NULL       -- date of the run that found it first
+            )""")
+        known = db.execute(f"SELECT id, direction, price, position, status, elected_period FROM {table} "
+                           "WHERE timeframe = ?", (timeframe,)).fetchall()
+        used = set()
+
+        def find(r, status, period=None):
+            for rid, direction, price, position, st, ep in known:
+                if (rid not in used and st == status and (direction, price, position) == (r['direction'], r['price'], r['position'])
+                        and (status == 'active' or ep == period)):
+                    used.add(rid)
+                    return rid
+            return None
+
+        def update(rid, r):
+            db.execute(f"UPDATE {table} SET major = ?, double = ?, extended = ?, order_number = ?, status = ?, elected_period = ? "
+                       "WHERE id = ?",
+                       (r['major'], r['double'], r['extended'], r['order_number'], r['status'], r['elected_period'], rid))
+
+        # Elected ones first, so a reversal that was just elected is matched to its active row
+        for r in sorted(reversals, key=lambda r: r['status'] != 'elected'):
+            rid = find(r, r['status'], r['elected_period'])
+            if rid is None and r['status'] == 'elected':
+                rid = find(r, 'active')
+                newly_elected += rid is not None
+            if rid is not None:
+                update(rid, r)
+            else:
+                db.execute(f"INSERT INTO {table} (timeframe, direction, price, position, major, double, extended, order_number, "
+                           "status, elected_period, first_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                           (timeframe, r['direction'], r['price'], r['position'], r['major'], r['double'], r['extended'],
+                            r['order_number'], r['status'], r['elected_period'], day))
+                added += 1
+    return added, newly_elected
+
+def get_reversals(driver, db, ticker, ticker_config, timelevel, array_type, today, reload):
+    """Read the ticker's reversals for one time frame and store them. The ticker page is already
+    open after its array; reload is set when the array step failed and may have left another page."""
+    log.debug(f"Processing {ticker} - {array_type} reversals...")
+    if reload:
+        open_ticker_page(driver, ticker_config)
+    result = driver.execute_script(REVERSALS_SCRIPT, timelevel) or {}
+    if not result.get('success'):
+        reason = result.get('error') or (f"HTTP {result['status']}" if result.get('status') else 'unknown error')
+        raise ExtractionError(f"the reversals request failed ({reason})")
+    timing_name = {'D': 'Daily', 'W': 'Weekly', 'M': 'Monthly'}[array_type]
+    if not result['title'].startswith(timing_name):
+        raise ExtractionError(f"expected the {timing_name} reversals, the site returned '{result['title']}'")
+    try:
+        reversals = [parse_reversal(row) for row in result['rows']]
+    except (KeyError, ValueError) as e:
+        raise ExtractionError(f"could not read the reversals table: {e}") from None
+    try:
+        added, elected = save_reversals(db, ticker, array_type, reversals, today)
+    except sqlite3.Error as e:
+        raise ExtractionError(f"could not save the reversals: {e}") from None
+    active = sum(r['status'] == 'active' for r in reversals)
+    log.debug(f"Reversals saved: {ticker} {array_type}, {active} active and {len(reversals) - active} elected "
+              f"on the site, {added} new, {elected} newly elected")  # the app counts these lines
+
 def quit_driver(driver):
     """Close the browser, ignoring errors from a browser that already crashed"""
     try:
@@ -378,13 +547,19 @@ def extract(args):
     else:
         tickers = config['tickers']
     
-    log.info(f"Starting extraction for {len(tickers)} ticker(s), "
-             f"arrays: {', '.join(code for _, code in frames)}")
+    codes = ', '.join(code for _, code in frames)
+    what = (f"reversals: {codes}" if args.reversals_only else
+            f"arrays: {codes}" + (", with reversals" if args.reversals else ""))
+    log.info(f"Starting extraction for {len(tickers)} ticker(s), {what}")
     
     today = datetime.now().date()  # the run's date, also when it goes past midnight
     created = 0
     failed = []    # "TICKER F" for each array that could not be saved
     outdated = []  # "TICKER F" for each array the site still showed for the previous period
+    rev_saved = 0
+    rev_failed = []  # "TICKER F" for each time frame whose reversals could not be saved
+    # The reversals database lives next to config.json, in the same data folder
+    db = open_reversals_db(Path(args.config).resolve().parent / REVERSALS_DB) if args.reversals else None
     driver = None
     try:
         # Setup browser
@@ -399,14 +574,29 @@ def extract(args):
         # Process each ticker; a failed array is logged and the run continues
         for ticker, ticker_config in tickers.items():
             for timelevel, array_type in frames:
+                # The reversals read the page the array step opened; without it, or when it
+                # failed, they open the ticker page themselves
+                page_needed = args.reversals_only
+                if not args.reversals_only:
+                    try:
+                        if get_timing_array(driver, ticker, ticker_config, timelevel, array_type, today):
+                            created += 1
+                        else:
+                            outdated.append(f"{ticker} {array_type}")
+                    except Exception as e:
+                        page_needed = True
+                        failed.append(f"{ticker} {array_type}")
+                        log.error(f"Failed: {ticker} - {array_type} array: {describe_error(e)}")
+                        if isinstance(e, WebDriverException) and browser_is_gone(e):
+                            raise BrowserGone("The browser closed unexpectedly, stopping") from None
+                if not db:
+                    continue
                 try:
-                    if get_timing_array(driver, ticker, ticker_config, timelevel, array_type, today):
-                        created += 1
-                    else:
-                        outdated.append(f"{ticker} {array_type}")
+                    get_reversals(driver, db, ticker, ticker_config, timelevel, array_type, today, page_needed)
+                    rev_saved += 1
                 except Exception as e:
-                    failed.append(f"{ticker} {array_type}")
-                    log.error(f"Failed: {ticker} - {array_type} array: {describe_error(e)}")
+                    rev_failed.append(f"{ticker} {array_type}")
+                    log.error(f"Failed: {ticker} - {array_type} reversals: {describe_error(e)}")
                     if isinstance(e, WebDriverException) and browser_is_gone(e):
                         raise BrowserGone("The browser closed unexpectedly, stopping") from None
     except (ExtractionError, BrowserGone) as e:
@@ -414,35 +604,57 @@ def extract(args):
     finally:
         if driver:
             quit_driver(driver)
+        if db:
+            db.close()
     
-    expected = len(tickers) * len(frames)
-    if created == expected:
-        log.info(f"Extraction complete! {created} file(s) created")
-        return 0
-    not_run = expected - created - len(failed) - len(outdated)
-    if not failed and not not_run:
-        log.warning(f"Extraction finished with outdated arrays: {created} of {expected} file(s) up to date, "
-                    f"outdated: {', '.join(outdated)}")
-        return OUTDATED_EXIT
-    summary = f"Extraction finished with errors: {created} of {expected} file(s) created"
+    level, message, status = run_summary(len(tickers) * len(frames), args, created, failed, outdated,
+                                         rev_saved, rev_failed)
+    log.log(level, message)
+    return status
+
+def run_summary(expected, args, created, failed, outdated, rev_saved, rev_failed):
+    """The run's last log line and exit status. Arrays are counted as files, reversals as the
+    tables saved (one per ticker and time frame); the Socrates app shows this line as the result."""
+    arrays = not args.reversals_only
+    not_run = expected - created - len(failed) - len(outdated) if arrays else 0
+    rev_not_run = expected - rev_saved - len(rev_failed) if args.reversals else 0
+    parts = []
+    if arrays:
+        parts.append(f"{created} file(s) created" if created == expected else
+                     f"{created} of {expected} file(s) {'created' if failed or not_run else 'up to date'}")
+    if args.reversals:
+        parts.append(f"{rev_saved} reversal table(s) saved" if rev_saved == expected else
+                     f"{rev_saved} of {expected} reversal table(s) saved")
+    problems = []
     if failed:
-        summary += f", failed: {', '.join(failed)}"
+        problems.append(f"failed: {', '.join(failed)}")
+    if rev_failed:
+        problems.append(f"reversals failed: {', '.join(rev_failed)}")
     if outdated:
-        summary += f", outdated: {', '.join(outdated)}"
-    if not_run:
-        summary += f", {not_run} not attempted"
-    log.error(summary)
-    return 1
+        problems.append(f"outdated: {', '.join(outdated)}")
+    if not_run or rev_not_run:
+        problems.append(f"{max(not_run, rev_not_run)} not attempted")
+    text = ', '.join(parts + problems)
+    if failed or rev_failed or not_run or rev_not_run:
+        return logging.ERROR, f"Extraction finished with errors: {text}", 1
+    if outdated:
+        return logging.WARNING, f"Extraction finished with outdated arrays: {text}", OUTDATED_EXIT
+    return logging.INFO, f"Extraction complete! {text}", 0
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Extract Socrates Platform timing arrays',
-        epilog='Exit status: 0 when every array was saved and current, 1 when anything failed, '
+        description='Extract Socrates Platform timing arrays and reversals',
+        epilog='Timeframes: -d, -w and -m can be combined (e.g. -dwm); without any, daily is used. '
+               'Exit status: 0 when every array (and set of reversals) was saved and the arrays are current, 1 when anything failed, '
                '2 when nothing failed but some arrays were still outdated on the site, '
                '130 when interrupted with Ctrl+C.')
-    parser.add_argument('-d', '--daily', action='store_true', help='Extract Daily arrays')
-    parser.add_argument('-w', '--weekly', action='store_true', help='Extract Weekly arrays')
-    parser.add_argument('-m', '--monthly', action='store_true', help='Extract Monthly arrays')
+    parser.add_argument('-d', '--daily', action='store_true', help='Daily timeframe')
+    parser.add_argument('-w', '--weekly', action='store_true', help='Weekly timeframe')
+    parser.add_argument('-m', '--monthly', action='store_true', help='Monthly timeframe')
+    parser.add_argument('--reversals', action='store_true',
+                        help=f'Also save the reversals of the chosen timeframes, in {REVERSALS_DB} next to the config file')
+    parser.add_argument('--reversals-only', action='store_true',
+                        help='Save only the reversals of the chosen timeframes, without the arrays')
     parser.add_argument('--ticker', type=str, help='Comma-separated list of tickers (e.g., TQQQ,UCO)')
     parser.add_argument('--interactive', action='store_true', help='Open a visible browser window (default is headless, no GUI)')
     parser.add_argument('--config', default=str(DEFAULT_CONFIG),
@@ -453,6 +665,7 @@ def main():
     
     args = parser.parse_args()
     setup_logging(args.log_level)
+    args.reversals = args.reversals or args.reversals_only
     
     # Default to daily if no flags specified
     if not (args.daily or args.weekly or args.monthly):

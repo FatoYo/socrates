@@ -2,15 +2,16 @@
 
 **Created by** FatoYo November 2025
 
-A Python script that automatically extracts Daily, Weekly, and Monthly timing arrays from the Socrates Platform and saves them as cropped screenshots.
+A Python script that automatically extracts Daily, Weekly, and Monthly timing arrays from the Socrates Platform and saves them as cropped screenshots. It can also save the reversals of the same timeframes in a SQLite database.
 
 ## What it does
 
-This tool logs into the Socrates Platform, navigates to specified ticker dashboards, and captures timing arrays for technical analysis. It automatically:
+This tool logs into the Socrates Platform, navigates to specified ticker dashboards, and captures timing arrays and reversals for technical analysis. It automatically:
 
 - Logs into your Socrates Platform account
 - Extracts timing arrays for specified tickers
 - Saves properly formatted and cropped screenshots
+- Optionally saves the active and elected reversals in `reversals.sqlite`, one table per ticker
 - Supports Daily (D), Weekly (W), and Monthly (M) timeframes
 
 ## Installation
@@ -71,6 +72,16 @@ Extract all timeframes for multiple tickers:
 ./socrates-arrays.sh -dwm --ticker "TQQQ,UCO"
 ```
 
+Extract all timeframes with their reversals:
+```bash
+./socrates-arrays.sh -dwm --reversals
+```
+
+Save only the weekly and monthly reversals, without arrays:
+```bash
+./socrates-arrays.sh -wm --reversals-only
+```
+
 Extract weekly arrays for all configured tickers:
 ```bash
 ./socrates-arrays.sh -w
@@ -88,16 +99,18 @@ Also show progress (login steps, each array processed and saved):
 
 ### Options
 
-- `-d, --daily`: Extract Daily timing arrays
-- `-w, --weekly`: Extract Weekly timing arrays  
-- `-m, --monthly`: Extract Monthly timing arrays
+- `-d, --daily`: Daily timeframe
+- `-w, --weekly`: Weekly timeframe
+- `-m, --monthly`: Monthly timeframe
+- `--reversals`: Also save the reversals of the chosen timeframes (see Reversals below)
+- `--reversals-only`: Save only the reversals of the chosen timeframes, without the arrays
 - `--ticker TICKER`: Comma-separated list of tickers (e.g., TQQQ,UCO)
 - `--interactive`: Open a visible browser window while extracting
 - `--log-level LEVEL`: Lowest level of log messages to show: `debug`, `info` (default), `warning` or `error`
 - `--config PATH`: Config file to use (default: `config.json` next to the script)
 
 The browser runs in headless mode (no GUI) by default. Use `--interactive` to watch it work.
-If no timeframe flags are specified, Daily arrays are extracted by default.
+The timeframe flags can be combined (`-dwm`). If none is given, Daily is used.
 If no ticker is specified, all tickers in config.json are processed.
 
 ## Logging
@@ -114,12 +127,14 @@ Every output line has a date, time and level:
 [2026-11-11 08:50:55] ERROR   Extraction finished with errors: 22 of 23 file(s) created, failed: UCO D
 ```
 
+With `--reversals`, each array is followed by `Processing TQQQ - D reversals...` and `Reversals saved: TQQQ D, …` (or `Failed: TQQQ - D reversals: …`), and the last line also counts the reversal tables, e.g. `Extraction complete! 23 file(s) created, 23 reversal table(s) saved`.
+
 | Level | Used for |
 |-------|----------|
 | `INFO` | Start of the run and `Extraction complete! N file(s) created` |
-| `DEBUG` | Progress: login steps, each array processed and saved |
+| `DEBUG` | Progress: login steps, each array and set of reversals processed and saved |
 | `WARNING` | An array is outdated (see below), tickers given with `--ticker` that are not in `config.json` (they are skipped), or the run was stopped with Ctrl+C |
-| `ERROR` | An array, the login or the browser failed. The message gives a short reason instead of a Python stack trace, and the final summary lists the arrays that failed |
+| `ERROR` | An array, a set of reversals, the login or the browser failed. The message gives a short reason instead of a Python stack trace, and the final summary lists the arrays that failed |
 
 By default (`--log-level info`) the `INFO`, `WARNING` and `ERROR` lines are shown, so errors always appear. Add `--log-level debug` to also see the `DEBUG` progress lines. The example above is a run with `--log-level debug`.
 
@@ -131,8 +146,8 @@ By default (`--log-level info`) the `INFO`, `WARNING` and `ERROR` lines are show
 
 | Status | Meaning |
 |--------|---------|
-| `0` | Every requested array was saved and is current |
-| `1` | At least one array failed, or the run stopped because of a login, browser or config error |
+| `0` | Every requested array (and set of reversals) was saved, and the arrays are current |
+| `1` | At least one array or set of reversals failed, or the run stopped because of a login, browser or config error |
 | `2` | Nothing failed, but the site still showed outdated arrays for some tickers |
 | `130` | Stopped with Ctrl+C |
 
@@ -141,6 +156,10 @@ By default (`--log-level info`) the `INFO`, `WARNING` and `ERROR` lines are show
 Sometimes the Socrates Platform hasn't updated yet and still shows the previous period's array. Such an array is logged as outdated, the run continues, and the script exits with status `2`. The Socrates web app then downloads those arrays again with its retry settings.
 
 The saved images show the array's year on the right of the title bar.
+
+## Reversals
+
+With `--reversals`, the script also reads the reversals table (the one the R key shows on the site) for each chosen timeframe and saves it in `reversals.sqlite` next to `config.json`, which is created on the first run. The database has one table per ticker and one row per reversal, with its timeframe, direction, price, the numbers shown next to it (position and order), the Major, Double and Extended flags, and whether it is active or elected (and in which day, week or month). New reversals are added, and a reversal that gets elected is updated, so elected reversals are kept after they leave the site's list.
 
 ## Requirements
 

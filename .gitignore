@@ -1,5 +1,7 @@
 # Socrates credentials (copy config.example.json to config.json and fill it in)
 config.json
+# Reversals saved by the arrays extractor with --reversals
+reversals.sqlite
 
 # ---> Python
 # Byte-compiled / optimized / DLL files
