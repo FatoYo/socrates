@@ -349,7 +349,7 @@ const Downloads = {
     if (kind === 'blog') return 'Check the public blog (pages 1-2) and the private blog (page 1) for new posts now';
     const frames = this.status ? (this.status.todayFrames.length ? this.status.todayFrames : ['D']) : null;
     const names = { D: 'daily', W: 'weekly', M: 'monthly' };
-    return 'Download today\'s timing arrays now, the same as the scheduled run' +
+    return 'Download today\'s timing arrays and reversals now, the same as the scheduled run' +
       (frames ? ` (${frames.map((f) => names[f]).join(' + ')})` : '');
   },
 

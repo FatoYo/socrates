@@ -1,5 +1,5 @@
 """
-Scheduled runs of the timing arrays extractor and the blog downloader, the extractor
+Scheduled runs of the timing arrays extractor (arrays and reversals) and the blog downloader, the extractor
 config files they read, and the log files of every run.
 
 The extractors live next to this app (the package layout is socrates/{socrates-app,
@@ -52,7 +52,7 @@ CLEANUP_EVERY_SECONDS = 6 * 3600
 MAX_LOG_LINES = 5000
 
 JOBS = {
-    "arrays": {"label": "Timing arrays", "enabledKey": "arraysEnabled", "timeout": 3600},
+    "arrays": {"label": "Timing arrays & reversals", "enabledKey": "arraysEnabled", "timeout": 3600},
     "blog-public": {"label": "Public blog", "enabledKey": "publicEnabled", "timeout": 1200},
     "blog-private": {"label": "Private blog", "enabledKey": "privateEnabled", "timeout": 1200},
 }
@@ -62,6 +62,7 @@ LEVEL_RANK = {name: i for i, name in enumerate(LEVELS)}
 LEVEL_RANK["CRITICAL"] = LEVEL_RANK["ERROR"]
 LINE_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+(.*)$")
 SAVED_RE = re.compile(r"\bSaved: \d{8} ([DWM]) (.+)\.png$")
+REVERSALS_SAVED_RE = re.compile(r"\bReversals saved: (\S+) ([DWM]),")
 ERROR_LINE_RE = re.compile(r"^(Traceback \(most recent call last\)|[A-Za-z_.]*(Error|Exception)\b)")
 APP_PREFIX = "Socrates app: "
 SCHEDULED_PAGES = {"blog-public": "1-2", "blog-private": "1"}
@@ -655,7 +656,8 @@ class Scheduler:
             flags = "-" + "".join(f.lower() for f in frames)
             # The extractor reads config.json from its own folder unless told otherwise.
             config_args = ["--config", str(ARRAYS_CONFIG)] if DATA_DIR else []
-            return (["/bin/bash", str(ARRAYS_SCRIPT), flags, "--log-level", "debug", *ticker_args, *config_args],
+            return (["/bin/bash", str(ARRAYS_SCRIPT), flags, "--reversals", "--log-level", "debug",
+                     *ticker_args, *config_args],
                     ARRAYS_DIR, requested)
         root = settings.get("blogRoot")
         if not root or not os.path.isdir(root):
@@ -714,7 +716,8 @@ class Scheduler:
             f.write(f"[{_human(self._now(sched))}] {level:<7} {APP_PREFIX}{message}\n")
             f.flush()
 
-        saved, summary, timed_out, code = set(), "", False, None
+        # "TICKER F" items whose array, and whose reversals, were saved
+        saved, rev_saved, summary, timed_out, code = set(), set(), "", False, None
         with open(log_path, "w", encoding="utf-8") as f:
             what = {"schedule": "Scheduled run", "retry": "Retry", "manual": "Manual run",
                     "new-ticker": "Run for a new ticker"}[item["trigger"]]
@@ -769,6 +772,9 @@ class Scheduler:
                         hit = SAVED_RE.search(m.group(3))
                         if hit:
                             saved.add(f"{hit.group(2)} {hit.group(1)}")
+                        hit = REVERSALS_SAVED_RE.search(m.group(3))
+                        if hit:
+                            rev_saved.add(f"{hit.group(1)} {hit.group(2)}")
                 code = proc.wait()
                 timer.cancel()
                 self._end_group(proc)
@@ -795,10 +801,12 @@ class Scheduler:
             record.update(status=status, exitCode=code, summary=summary, end=_human(self._now(sched)))
 
             if job == "arrays" and status != "success":
-                remaining = [r for r in requested if r not in saved]
+                # An item is done when both its array and its reversals were saved; a retry
+                # downloads both again.
+                remaining = [r for r in requested if r not in saved or r not in rev_saved]
                 record["remaining"] = remaining
                 if not remaining:
-                    app_line(f, "INFO", "All requested arrays were saved, no retry needed")
+                    app_line(f, "INFO", "All requested arrays and reversals were saved, no retry needed")
                 elif attempt < max_attempts:
                     at = self._now(sched) + timedelta(hours=sched["arraysRetryHours"])
                     with self.lock:
@@ -812,7 +820,7 @@ class Scheduler:
                         js["retry"] = {"at": _iso(at), "remaining": remaining,
                                        "attempt": max(attempt + 1, pending["attempt"] if pending else 0)}
                         self._save_state()
-                    next_step = (f"Retrying {len(remaining)} array(s) at {at.strftime('%H:%M')} "
+                    next_step = (f"Retrying {len(remaining)} array(s) and reversals at {at.strftime('%H:%M')} "
                                  f"(attempt {attempt + 1} of {max_attempts}): {', '.join(remaining)}")
                     app_line(f, "INFO", next_step)
                 else:

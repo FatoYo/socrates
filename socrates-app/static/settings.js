@@ -199,7 +199,7 @@ const Settings = {
         this.tickerEdits = null;
         await this.loadExtractors();
         const parts = [];
-        if (r.added.length) parts.push(`Downloading the daily, weekly and monthly arrays of ${r.added.join(', ')} now.`);
+        if (r.added.length) parts.push(`Downloading the daily, weekly and monthly arrays and reversals of ${r.added.join(', ')} now.`);
         if (r.removed.length) parts.push(`Removed ${r.removed.join(', ')}. Their folders and arrays were kept.`);
         this.setStatus(this.tickerStatus, 'ok', '✓ Saved. ' + parts.join(' '));
         this.refreshJobs();
@@ -242,7 +242,7 @@ const Settings = {
     if (message) this.setStatus(status, message[0], message[1]);
     else if (changes) {
       this.setStatus(status, 'busy', `${changes} unsaved change${changes === 1 ? '' : 's'}. Press Save to apply ` +
-        (edits.add.length ? 'and download the arrays of the new tickers.' : 'them.'));
+        (edits.add.length ? 'and download the arrays and reversals of the new tickers.' : 'them.'));
     }
     fill(this.tickersEl,
       h('h2', null, `Timing array tickers (${x.tickers.length})`),
@@ -314,10 +314,10 @@ const Settings = {
       h('div', { class: 'form-grid' },
         row('Time zone', f.timezone),
         row('Start time', f.startTime, h('span', { class: 'hint' }, 'Daily arrays run, and the first blog check of the day')),
-        h('div', { class: 'form-sub' }, 'Timing arrays'),
+        h('div', { class: 'form-sub' }, 'Timing arrays & reversals'),
         row('Enabled', check('arraysEnabled')),
         row('Retry after', num('arraysRetryHours', { min: 0.25, max: 24, step: 0.25 }), 'hours',
-          h('span', { class: 'hint' }, 'Only the arrays that failed are downloaded again')),
+          h('span', { class: 'hint' }, 'Only the arrays and reversals that failed are downloaded again')),
         row('Attempts per day', num('arraysMaxAttempts', { min: 1, max: 10, step: 1 }), h('span', { class: 'hint' }, 'The first run included')),
         h('div', { class: 'form-sub' }, 'Public blog (pages 1–2, no login)'),
         row('Enabled', check('publicEnabled')),

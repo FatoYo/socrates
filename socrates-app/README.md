@@ -132,17 +132,17 @@ The **Downloads** part of Settings sets up the extractors that come in the same 
 
 **Socrates Platform account.** One e-mail and password, written to both `../socrates-arrays-extractor/config.json` and `../ae-blog/config.json`. After saving, the password is never sent back to the browser. Leave the field empty to keep the current one. Both `config.json` files are git-ignored.
 
-**Timing array tickers.** The tickers the arrays extractor downloads. To add one, enter the symbol and the address of its Socrates Platform page (open the instrument on the site and copy the URL, e.g. `https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=…`). Arrays are saved to `<timing arrays folder>/<TICKER>`, and that folder is created when the ticker is added. **Add ticker** and **Remove** only mark the changes in the table (new rows are highlighted, removed rows are struck through and can be undone). **Save** writes them to the config and then downloads the daily, weekly and monthly arrays of all added tickers in one run, so the current week's and month's arrays aren't missing until the next weekly or monthly run. That run waits if another job is running, and its failures are retried like a scheduled run. **Discard changes** drops unsaved changes, and so does leaving the Settings page. Removing a ticker keeps its folder and arrays.
+**Timing array tickers.** The tickers the arrays extractor downloads. To add one, enter the symbol and the address of its Socrates Platform page (open the instrument on the site and copy the URL, e.g. `https://standard.socratesplatform.com/MarketLanding/Analysis/?analysisId=…`). Arrays are saved to `<timing arrays folder>/<TICKER>`, and that folder is created when the ticker is added. **Add ticker** and **Remove** only mark the changes in the table (new rows are highlighted, removed rows are struck through and can be undone). **Save** writes them to the config and then downloads the daily, weekly and monthly arrays and reversals of all added tickers in one run, so the current week's and month's arrays aren't missing until the next weekly or monthly run. That run waits if another job is running, and its failures are retried like a scheduled run. **Discard changes** drops unsaved changes, and so does leaving the Settings page. Removing a ticker keeps its folder and arrays.
 
 **Automatic downloads.** While the app is running, it starts the extractors in the background, one job at a time:
 
 | Job | When | Command |
 |-----|------|---------|
-| Timing arrays | Daily at the start time (a random minute between 05:00 and 05:59, picked on the first start) | Tue–Fri `-d`, Saturday `-dw`, Sunday and Monday nothing. The 1st of the month adds `-m` (alone on a Sunday or Monday) |
+| Timing arrays & reversals | Daily at the start time (a random minute between 05:00 and 05:59, picked on the first start) | Tue–Fri `-d`, Saturday `-dw`, Sunday and Monday nothing. The 1st of the month adds `-m` (alone on a Sunday or Monday). Always with `--reversals` |
 | Public blog | Every N hours from the start time (default 12) | `ae-blog.sh 1-2 --public` (no login) |
 | Private blog | Every N hours from the start time (default 12) | `ae-blog.sh 1 --private` (one login) |
 
-All jobs run with `--log-level debug`. If the arrays run fails or some arrays are outdated, only those arrays are downloaded again after **Retry after** hours (default 1), in one call with one login. **Attempts per day** (default 3) counts the first run too. A run is stopped after 60 minutes (arrays) or 20 minutes (blog).
+The reversals are saved in `reversals.sqlite` next to the arrays extractor's `config.json` (in Docker, the data folder). All jobs run with `--log-level debug`. If the arrays run fails, some arrays are outdated or some reversals fail, only those arrays and their reversals are downloaded again after **Retry after** hours (default 1), in one call with one login. **Attempts per day** (default 3) counts the first run too. A run is stopped after 60 minutes (arrays) or 20 minutes (blog).
 
 The start time is picked at random between 05:00 and 05:59 the first time the app starts, so installs in the same time zone don't all log in to the Socrates Platform at the same minute. It is saved in `settings.json` and stays the same after restarts.
 
@@ -150,12 +150,12 @@ The time zone, start time, intervals, retries, log retention and on/off switch f
 
 **Jobs table.** Shows the last and next run of each job. The **Run now** controls are only for running a job by hand with your own choice and don't change the automatic downloads:
 
-- Timing arrays: tick Daily, Weekly and/or Monthly (only Daily is ticked by default).
+- Timing arrays & reversals: tick Daily, Weekly and/or Monthly (only Daily is ticked by default).
 - Public and private blog: the list pages to check, e.g. `1`, `1-3` or `1,3,5` (default `1`).
 
 **Download now.** The Arrays page and the Blog page each have a **⬇ Download now** button that runs their jobs right away, the same way the schedule does:
 
-- Arrays page: today's scheduled arrays (e.g. Daily + Weekly on a Saturday). On a Sunday or Monday, when nothing is scheduled, it downloads the Daily array.
+- Arrays page: today's scheduled arrays and reversals (e.g. Daily + Weekly on a Saturday). On a Sunday or Monday, when nothing is scheduled, it downloads the Daily array.
 - Blog page: the public blog (pages 1-2) and then the private blog (page 1).
 
 The button shows "Downloading…" while the jobs run. Next to it is the result of the newest run, retries and scheduled runs included, which updates when the next run finishes.
@@ -164,12 +164,12 @@ A run that was due while the app was stopped runs once when it starts again. The
 
 The app must run as a single process (it does with `./socrates.sh`), otherwise each process would start its own scheduler.
 
-**Terminal output.** The terminal the app runs in shows one line when a job starts and one when it finishes, plus the retry plan if arrays failed:
+**Terminal output.** The terminal the app runs in shows one line when a job starts and one when it finishes, plus the retry plan if arrays or reversals failed:
 
 ```
-[2026-11-17 05:42:00] Job: Timing arrays started, scheduled run (attempt 1 of 3): socrates-arrays.sh -d --log-level debug
-[2026-11-17 05:45:10] Job: Timing arrays failed: Extraction finished with errors: 22 of 23 file(s) created, failed: UCO D
-[2026-11-17 05:45:10] Job: Timing arrays: Retrying 1 array(s) at 06:45 (attempt 2 of 3): UCO D
+[2026-11-17 05:42:00] Job: Timing arrays & reversals started, scheduled run (attempt 1 of 3): socrates-arrays.sh -d --reversals --log-level debug
+[2026-11-17 05:45:10] Job: Timing arrays & reversals failed: Extraction finished with errors: 22 of 23 file(s) created, 22 of 23 reversal table(s) saved, failed: UCO D, reversals failed: UCO D
+[2026-11-17 05:45:10] Job: Timing arrays & reversals: Retrying 1 array(s) and reversals at 06:45 (attempt 2 of 3): UCO D
 ```
 
 The full output of each job is only on the Logs page. The Settings and Logs pages ask for the job status every few seconds; those requests are not printed when they succeed, so the terminal only lists other requests and errors.

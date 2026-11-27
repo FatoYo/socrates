@@ -30,7 +30,7 @@ A self-hosted web app for browsing Socrates timing arrays and the Armstrong Econ
 
 ### Automatic downloads
 
-- Downloads new arrays every morning: daily arrays Tuesday to Saturday, weekly arrays on Saturday and monthly arrays on the 1st. Failed arrays are retried.
+- Downloads new arrays every morning: daily arrays Tuesday to Saturday, weekly arrays on Saturday and monthly arrays on the 1st. The reversals of the same time frames are saved in a SQLite database. Failed arrays and reversals are retried.
 - Checks the public and private blog for new posts every 12 hours.
 - Settings page for the Socrates login, the list of tickers and the schedule. Newly added tickers get their daily, weekly and monthly arrays straight away.
 - **Download now** buttons on the Arrays and Blog pages, and a Logs page with the output of every run, filtered by level, job and date.
@@ -42,7 +42,7 @@ The repository holds three parts. The web app runs the two downloaders on its sc
 | Folder | What it does |
 |--------|--------------|
 | [`socrates-app/`](socrates-app/README.md) | The web app: browsing, settings, schedule and logs |
-| [`socrates-arrays-extractor/`](socrates-arrays-extractor/README.md) | Logs in to the Socrates Platform and saves the timing arrays as images, one folder per ticker |
+| [`socrates-arrays-extractor/`](socrates-arrays-extractor/README.md) | Logs in to the Socrates Platform and saves the timing arrays as images, one folder per ticker, and the reversals in a SQLite database |
 | [`ae-blog/`](ae-blog/README.md) | Saves the public and private blog posts as markdown files with Obsidian-compatible front matter, one folder per year |
 
 The arrays and posts are plain files in two folders you choose, so you can also use them outside the app.
